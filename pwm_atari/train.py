@@ -50,12 +50,6 @@ permute = lambda x: x.permute(0, 3, 1, 2)[:, None]
 
 
 CLI_CONFIG_ALIASES = {
-    "UseJacobianReg": "Models.WorldModel.UseJacobianReg",
-    "JacobianScale": "Models.WorldModel.JacobianScale",
-    "JacobianTimeSample": "Models.WorldModel.JacobianTimeSample",
-    "JacobianEvery": "Models.WorldModel.JacobianEvery",
-    "JacobianProbeDist": "Models.WorldModel.JacobianProbeDist",
-    "JacobianStateMode": "Models.WorldModel.JacobianStateMode",
     "RWKVKernel": "Models.WorldModel.RWKVKernel",
     "RWKVW0Bias": "Models.WorldModel.RWKVW0Bias",
     "RWKVArch": "Models.WorldModel.RWKVArch",
@@ -217,8 +211,6 @@ def build_world_model(conf, num_action, act, device):
     return ParallelWorldModel(conf.JointTrainAgent.VideoLogStep,
                               conf.BasicSettings.ObsShape,
                               num_action,
-                              conf.Models.Stoch,
-                              conf.Models.Discrete, 
                               conf.Models.Hidden,
                               conf.Models.WorldModel.Stem,
                               conf.Models.WorldModel.MinRes,
@@ -236,12 +228,6 @@ def build_world_model(conf, num_action, act, device):
                               conf.BasicSettings.UseAmp,
                               act, device,
                               conf.Models.WorldModel.RWKVKernel,
-                              conf.Models.WorldModel.UseJacobianReg,
-                              conf.Models.WorldModel.JacobianScale,
-                              conf.Models.WorldModel.JacobianTimeSample,
-                              conf.Models.WorldModel.JacobianEvery,
-                              conf.Models.WorldModel.JacobianProbeDist,
-                              conf.Models.WorldModel.JacobianStateMode,
                               conf.Models.WorldModel.RWKVW0Bias,
                               conf.Models.WorldModel.RWKVArch,
                               ).to(device)
@@ -249,7 +235,6 @@ def build_world_model(conf, num_action, act, device):
 
 def build_agent(conf, num_action, act, device):
     return ActorCriticAgent(num_action,
-                            conf.Models.Stoch * conf.Models.Discrete + \
                             conf.Models.Hidden,
                             conf.Models.Hidden,
                             conf.Models.Agent.EntropyCoef,
@@ -302,7 +287,7 @@ if __name__ == "__main__":
     seed_np_torch(seed=args.seed)
     wandb_name = args.wandb_name or f"PWM-{args.env_name}-seed{args.seed}"
     wandb.init(
-        project="Atari100K",
+        project="rwkv_jepa_atari",
         group=f"{args.env_name}",
         name=wandb_name
     )

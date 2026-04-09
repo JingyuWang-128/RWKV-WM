@@ -29,8 +29,6 @@ class ParallelWorldModel(nn.Module):
                  video_log,
                  obs_shape,
                  num_action,
-                 stoch,      # 保留用于兼容 yaml，不再用于离散概率采样
-                 discrete,   # 同上
                  hidden,     # hidden 直接作为纯潜空间的 latent_dim
                  stem_ch,
                  min_res,
@@ -49,12 +47,6 @@ class ParallelWorldModel(nn.Module):
                  act,
                  device,
                  rwkv_kernel=False,
-                 use_jacobian_reg=False,      # 兼容签名，由于采用确定性 JEPA 架构，已在反向传播中被废弃
-                 jacobian_scale=0.0,          # 同上
-                 jacobian_time_sample=4,      # 同上
-                 jacobian_every=1,            # 同上
-                 jacobian_probe_dist="rademacher", # 同上
-                 jacobian_state_mode="all",   # 同上
                  rwkv_w0_bias=3.5,            # 同上
                  rwkv_arch="rwkv7",           # 同上
                 ):

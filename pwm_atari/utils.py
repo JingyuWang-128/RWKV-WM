@@ -66,8 +66,6 @@ def load_config(config_path):
     conf.Models.NumBin = 0
     conf.Models.MaxBin = 0
     conf.Models.Act = ""
-    conf.Models.Stoch = 0
-    conf.Models.Discrete = 0
     conf.Models.Gamma = 1.0
     conf.Models.Lambda = 0.0
     conf.Models.Tau = 0.0
@@ -84,12 +82,6 @@ def load_config(config_path):
     conf.Models.WorldModel.RWKVKernel = True
     conf.Models.WorldModel.RWKVW0Bias = 3.5
     conf.Models.WorldModel.RWKVArch = "rwkv7"
-    conf.Models.WorldModel.UseJacobianReg = False
-    conf.Models.WorldModel.JacobianScale = 0.0
-    conf.Models.WorldModel.JacobianTimeSample = 4
-    conf.Models.WorldModel.JacobianEvery = 1
-    conf.Models.WorldModel.JacobianProbeDist = "rademacher"
-    conf.Models.WorldModel.JacobianStateMode = "all"
 
     conf.Models.Agent = CN()
     conf.Models.Agent.EntropyCoef = 0.0

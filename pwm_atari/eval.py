@@ -16,12 +16,6 @@ permute = lambda x: x.permute(0, 3, 1, 2)[:, None]
 
 
 CLI_CONFIG_ALIASES = {
-    "UseJacobianReg": "Models.WorldModel.UseJacobianReg",
-    "JacobianScale": "Models.WorldModel.JacobianScale",
-    "JacobianTimeSample": "Models.WorldModel.JacobianTimeSample",
-    "JacobianEvery": "Models.WorldModel.JacobianEvery",
-    "JacobianProbeDist": "Models.WorldModel.JacobianProbeDist",
-    "JacobianStateMode": "Models.WorldModel.JacobianStateMode",
     "RWKVKernel": "Models.WorldModel.RWKVKernel",
     "RWKVW0Bias": "Models.WorldModel.RWKVW0Bias",
     "RWKVArch": "Models.WorldModel.RWKVArch",

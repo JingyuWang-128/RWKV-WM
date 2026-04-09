@@ -68,9 +68,9 @@ class Encoder(nn.Module):
 
 
 class Decoder(nn.Module):
-    def __init__(self, stoch, out_ch, in_ch, stem_ch, min_res, act):
+    def __init__(self, in_dim, out_ch, in_ch, stem_ch, min_res, act):
         super().__init__()
-        backbone = [Rearrange(stoch, out_ch, min_res, act())]
+        backbone = [Rearrange(in_dim, out_ch, min_res, act())]
 
         channels = out_ch
         feat_width = min_res
@@ -124,36 +124,6 @@ class InpLayer(nn.Module):
         x = self.head(x)
         return x
     
-
-class ObsStatLayer(nn.Module):
-    def __init__(self, inp_size, size, act):
-        super().__init__()
-        self.head = nn.Linear(inp_size, size, bias=False)
-        self.norm = BatchNorm1d(size)
-
-    def forward(self, inp):
-        if inp.dtype != self.head.weight.dtype:
-            inp = inp.to(self.head.weight.dtype)
-        x = self.head(inp)
-        x = self.norm(x)
-        return x
-
-
-class ImsStatLayer(nn.Module):
-    def __init__(self, inp_size, size, act):
-        super().__init__()
-        self.backbone = GatingLayer(inp_size, act())
-        self.head = nn.Linear(inp_size, size)
-        self.norm = BatchNorm1d(size)
-
-    def forward(self, inp):
-        if inp.dtype != self.head.weight.dtype:
-            inp = inp.to(self.head.weight.dtype)
-        x = self.backbone(inp)
-        x = self.head(x)
-        x = self.norm(x)
-        return x
-
 
 class MixingLayer(nn.Module):
     def __init__(self, inp_size, hidden, bias=True):
