@@ -39,15 +39,29 @@ class Encoder(nn.Module):
 
         self.backbone = nn.Sequential(*backbone)
         self.out_ch = channels
+        # 新增：加入 Self-Attention 弥补局部感受野
+        self.attn = nn.MultiheadAttention(embed_dim=self.out_ch, num_heads=4, batch_first=True)
+        # 新增：投影到纯潜空间维度 z_t
+        self.head = nn.Linear(self.out_ch * (min_res ** 2), latent_dim)
         self.embed = self.out_ch * (min_res ** 2)
 
     def forward(self, x):
         shape = x.shape[:2]
         x = x.flatten(0, 1)  # (B L) C H W
         x = self.backbone(x)
-        x = x.flatten(1, -1)
-        x = x.unflatten(0, shape)  # B L (C H W)
-        return x
+        
+        # 将空间维度 (H, W) 展平作为 Attention 的 Sequence 维度
+        B_L, C, H, W = x.shape
+        x = x.flatten(2, 3).transpose(1, 2)  # (B*L, H*W, C)
+        
+        # Self-Attention 处理空间全局关系
+        attn_out, _ = self.attn(x, x, x)
+        
+        # 展平并映射到潜空间向量 z_t
+        z = attn_out.flatten(1, 2)  # (B*L, H*W*C)
+        z = self.head(z)            # (B*L, latent_dim)
+        
+        return z.unflatten(0, shape)  # 还原为 (B, L, latent_dim)
 
 
 class Decoder(nn.Module):

@@ -1,22 +1,26 @@
-import copy
 import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.distributions as torchd
-from torch.distributions import OneHotCategorical
 
 import modules.functions_losses as func
 import modules.parallel_rnns as rnn
-from modules.rwkv_dynamics import RWKVDynamics
 import modules.networks as net
 
 
 params = lambda x: list(x.parameters())
 permute = lambda x: x.permute(0, 3, 1, 2)
 swap = lambda x: torch.transpose(x, 0, 1) 
-ste_sample = lambda d: d.probs + (d.sample() - d.probs).detach()
 to_param = lambda x: nn.Parameter(x)
+
+def sigreg_loss(z):
+    # z: (B*L, latent_dim)
+    # 减去均值
+    z_centered = z - z.mean(dim=0)
+    # 方差约束：迫使每个维度的方差接近 1 (避免坍缩为一个点)
+    std = torch.sqrt(z_centered.var(dim=0) + 1e-4)
+    std_loss = torch.mean(torch.relu(1 - std))
+    return std_loss
 
 
 class ParallelWorldModel(nn.Module):
@@ -25,9 +29,9 @@ class ParallelWorldModel(nn.Module):
                  is_proprio,
                  obs_shape,
                  action_dim,
-                 stoch,
-                 discrete,
-                 hidden,
+                 stoch,      # 保留参数签名以兼容原 config 文件，但不再作为离散维度使用
+                 discrete,   # 同上
+                 hidden,     # hidden 将直接作为纯潜空间的特征维度 latent_dim
                  stem_ch,
                  min_res,
                  num_bin,
@@ -50,12 +54,10 @@ class ParallelWorldModel(nn.Module):
         super().__init__()
         self.action_dim = action_dim
         self.hidden = hidden
-        self.stoch_dim = stoch * discrete
-        self.feat_dim = self.stoch_dim + hidden
+        self.feat_dim = hidden  # 暴露给外界 Agent 的特征维度变成了纯潜空间的 hidden dim
         self.dyn_scale = dyn_scale
         self.rep_scale = rep_scale
         self.val_scale = val_scale
-        self.kl_free = kl_free
         self.gamma = gamma
         self.lambd = lambd
         self.tau = tau
@@ -69,26 +71,24 @@ class ParallelWorldModel(nn.Module):
         self.tensor_dtype = torch.float16 if use_amp else torch.float32
         self.use_amp = use_amp
 
+        # 初始化 Encoder / Decoder (隐射和重建都在 hidden 维度上进行)
         if is_proprio:
             num_layer, encode_dim = 3, hidden * 2
             self.encoder = net.ProprioEncoder(obs_shape, encode_dim, num_layer, act)
-            self.decoder = net.ProprioDecoder(self.stoch_dim, obs_shape, encode_dim, num_layer, act)
+            self.decoder = net.ProprioDecoder(self.hidden, obs_shape, encode_dim, num_layer, act)
         else:
-            self.encoder = net.Encoder(obs_shape[0], obs_shape[-1], stem_ch, min_res, act)
-            self.decoder = net.Decoder(
-                self.stoch_dim, self.encoder.out_ch, obs_shape[-1], stem_ch, min_res, act)
+            # 假设 networks.py 中的 Encoder 已被修改为最终输出 self.hidden 维度的 z
+            self.encoder = net.Encoder(obs_shape[0], obs_shape[-1], stem_ch, min_res, act, latent_dim=self.hidden)
+            self.decoder = net.Decoder(self.hidden, self.encoder.out_ch, obs_shape[-1], stem_ch, min_res, act)
         
-        self.dynamic = RWKVDynamics(
-            stoch,
+        # 确定性动力学算子 (替代了原来的随机性 RWKVDynamics)
+        self.dynamic = PSSM(
             hidden,
-            discrete,
             action_dim,
-            self.encoder.embed,
             act,
-            device,
-            rwkv_kernel=rwkv_kernel,
-            rwkv_validate=rwkv_validate,
+            device
         )
+        
         self.done_head = net.Head(hidden, 1, hidden, act)
         self.reward_head = net.Head(hidden, num_bin, hidden, act)
 
@@ -114,28 +114,29 @@ class ParallelWorldModel(nn.Module):
     @torch.no_grad()
     def get_inference_feat(self, state, obs, is_first):
         with torch.autocast(device_type=self.device_type, dtype=self.tensor_dtype, enabled=self.use_amp):
-            embed = self.encoder(self.preprocess(obs)).squeeze(1)
-            obs_stats = self.dynamic.suff_stats_layer("obs", embed)
-            obs_stoch = ste_sample(self.dynamic.get_dist(obs_stats))
+            # 获取真实特征 z
+            true_z = self.encoder(self.preprocess(obs)).squeeze(1)
 
-            is_first = torch.tensor(is_first, dtype=self.tensor_dtype, device=self.device)
-            if is_first.sum() > 0:
-                init_state = self.initial(obs_stoch.shape[0])
+            is_first_t = torch.tensor(is_first, dtype=self.tensor_dtype, device=self.device)
+            if is_first_t.sum() > 0:
+                init_state = self.initial(true_z.shape[0])
                 for key, val in state.items():
-                    num_axis = val.dim() - is_first.dim()
-                    weight = is_first.unflatten(-1, [-1] + [1 for _ in range(num_axis)])
+                    num_axis = val.dim() - is_first_t.dim()
+                    weight = is_first_t.unflatten(-1, [-1] + [1 for _ in range(num_axis)])
                     state[key] = val * (1 - weight) + init_state[key] * weight
 
-            state.update({"stoch": obs_stoch, **obs_stats})
-        return self.dynamic.get_feat(state), state
+            # 存储当前的潜状态，用于和后续动作组合推演
+            state["z"] = true_z
+            feat = true_z
+        return feat, state
     
     @torch.no_grad()
     def update_inference_state(self, state, action):
         with torch.autocast(device_type=self.device_type, dtype=self.tensor_dtype, enabled=self.use_amp):
-            img_step_stats = self.dynamic.img_step(state, action, True)
-            deter, _, para_stats, _ = img_step_stats
-            state.update({"deter": deter, **para_stats})
-        return state
+            # 使用动作推演下一步
+            z_hat, next_state = self.dynamic.img_step(state["z"], action, state)
+            next_state["z"] = z_hat
+        return next_state
 
     def initial(self, batch_size):
         with torch.autocast(device_type=self.device_type, dtype=self.tensor_dtype, enabled=self.use_amp):
@@ -146,46 +147,47 @@ class ParallelWorldModel(nn.Module):
             init_zeros = lambda s: torch.zeros(s, dtype=self.tensor_dtype, device=self.device)
             self.batch_size, self.horizon = batch_size, horizon
 
-            deter_size = (batch_size, horizon+1, self.hidden)
-            stoch_size = (batch_size, horizon+1, self.stoch_dim)
+            z_size = (batch_size, horizon+1, self.hidden)
             action_size = (batch_size, horizon, self.action_dim)
-            self.deter_buffer = init_zeros(deter_size)
-            self.stoch_buffer = init_zeros(stoch_size)
+            self.z_buffer = init_zeros(z_size)
             self.action_buffer = init_zeros(action_size)
     
     @torch.no_grad()
-    def get_video_frame(self, prior, index):
-        stoch = self.dynamic.get_flatten_stoch(prior)
-        pred_frame = self.decoder(stoch[index, None])
+    def get_video_frame(self, z_sequence, index):
+        pred_frame = self.decoder(z_sequence[index, None])
         return pred_frame
 
     @torch.no_grad()
     def imagine_data(self, agent, obs, action, reward, done, is_first, horizon, logger=None, step=None):
         with torch.autocast(device_type=self.device_type, dtype=self.tensor_dtype, enabled=self.use_amp):
-            state, _, _, _ = self.dynamic.parallel_observe(self.encoder(obs), action, is_first)
-            img_state = {k: v.flatten(0, 1) for k, v in state.items()}
-            batch_size = self.dynamic.get_feat(img_state).shape[0]
+            true_z = self.encoder(obs)
+            # parallel_observe 现在返回完整的时序隐状态信息
+            z_full_pred, _, _, para_stats = self.dynamic.parallel_observe(true_z, action, is_first)
+            
+            # 提取最后一步状态，作为梦境推演的起点
+            curr_z = true_z[:, -1]
+            state = {k: v[:, -1] for k, v in para_stats.items()}
+            
+            batch_size = curr_z.shape[0]
             self.init_imagine_buffer(batch_size, horizon)
 
             video_index, pred_video = torch.randint(batch_size, (1,), device=self.device), []
+            
+            self.z_buffer[:, 0] = curr_z
 
             for t in range(horizon):
                 if logger is not None and not self.is_proprio:
                     if step % self.video_log == 0:
-                        pred_video += [self.get_video_frame(img_state, video_index)]
+                        pred_video += [self.get_video_frame(self.z_buffer[:, :t+1], video_index)[:, -1:]]
     
-                self.deter_buffer[:, t] = self.dynamic.get_deter(img_state)
-                self.stoch_buffer[:, t] = self.dynamic.get_flatten_stoch(img_state)
-                self.action_buffer[:, t] = agent.sample(
-                    torch.cat((self.deter_buffer[:, t], self.stoch_buffer[:, t]), dim=-1))
-                img_state = self.dynamic.img_step(img_state, self.action_buffer[:, t])
+                self.action_buffer[:, t] = agent.sample(curr_z)
+                # 确定性推演下一步
+                curr_z, state = self.dynamic.img_step(curr_z, self.action_buffer[:, t], state)
+                self.z_buffer[:, t+1] = curr_z
             
-            self.deter_buffer[:, -1] = self.dynamic.get_deter(img_state)
-            self.stoch_buffer[:, -1] = self.dynamic.get_flatten_stoch(img_state)
-
-            feat = torch.cat((self.deter_buffer, self.stoch_buffer), dim=-1)
-            discount = (self.done_head(self.deter_buffer[:, 1:]) < 0) * self.gamma
-            reward = self.twohot_loss.decode(self.reward_head(self.deter_buffer[:, 1:]))
+            feat = self.z_buffer
+            discount = (self.done_head(self.z_buffer[:, 1:]) < 0) * self.gamma
+            reward = self.twohot_loss.decode(self.reward_head(self.z_buffer[:, 1:]))
             weight = torch.cat((torch.ones_like(reward[:, :1]), discount[:, :-1]), dim=1)
             
         if logger is not None and not self.is_proprio:
@@ -197,62 +199,72 @@ class ParallelWorldModel(nn.Module):
     def update(self, agent, obs, action, reward, done, is_first, logger=None, step=None):
         self.train()
         with torch.autocast(device_type=self.device_type, dtype=self.tensor_dtype, enabled=self.use_amp):
-            post, prior, stoch, deter = self.dynamic.parallel_observe(self.encoder(obs), action, is_first)
-            dyn_loss, rep_loss, real_kl, ent = self.dynamic.kl_loss(post, prior, self.kl_free)
-
-            obs_hat = self.decoder(stoch)
-            done_hat = self.done_head(deter)
-            reward_hat = self.reward_head(deter)
-
-            recon_loss = self.mse_loss(obs_hat, obs)
-            done_loss = self.bce_logits_loss(done_hat, done)
-            reward_loss = self.twohot_loss(reward_hat, reward)
+            # 1. 编码获取真实潜状态 z (带梯度，更新 Encoder)
+            true_z = self.encoder(obs) 
             
-            head_loss = done_loss + reward_loss
-            model_loss = self.dyn_scale * dyn_loss + head_loss
-            vae_loss = recon_loss + self.rep_scale * rep_loss
+            # 2. RWKV 确定性推演，获取预测状态 z_hat
+            z_full_pred, z_hat, target_z, _ = self.dynamic.parallel_observe(true_z, action, is_first)
+            
+            # --- 损失 1：动力学对齐 (Cosine Distance) ---
+            dyn_loss = 1 - F.cosine_similarity(z_hat, target_z.detach(), dim=-1).mean()
+            
+            # --- 损失 2：SIGReg 防坍缩 ---
+            reg_loss = sigreg_loss(true_z.flatten(0, 1))
+            
+            # --- 损失 3：任务预测 (Reward & Done) ---
+            done_hat = self.done_head(z_hat)
+            reward_hat = self.reward_head(z_hat)
+            done_loss = self.bce_logits_loss(done_hat, done[:, 1:])
+            reward_loss = self.twohot_loss(reward_hat, reward[:, 1:])
+            task_loss = done_loss + reward_loss
+            
+            # --- 损失 4：退火式图像重建 ---
+            total_anneal_steps = 200000.0
+            lambda_recon = 0.5 * (1.0 + math.cos(math.pi * min(1.0, step / total_anneal_steps)))
+            
+            recon_loss = torch.tensor(0.0, device=self.device)
+            if lambda_recon > 1e-3: 
+                obs_hat = self.decoder(z_hat)
+                recon_loss = self.mse_loss(obs_hat, obs[:, 1:])
+            
+            # 总损失聚合 (保留了 rep_scale 作为 sigreg 的系数)
+            total_loss = self.dyn_scale * dyn_loss + self.rep_scale * reg_loss + lambda_recon * recon_loss + task_loss
 
-        self.scaler.scale(model_loss + vae_loss).backward()
+        self.scaler.scale(total_loss).backward()
         self.scaler.unscale_(self.optimizer)
-        torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1000.0)
+        torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=100.0) # 防止梯度爆炸
         self.scaler.step(self.optimizer)
         self.scaler.update()
         self.optimizer.zero_grad(set_to_none=True)
 
         if logger is not None:
-            logger.log("WorldModel/recon_loss", recon_loss.item(), step)
-            logger.log("WorldModel/reward_loss", reward_loss.item(), step)
             logger.log("WorldModel/dyn_loss", dyn_loss.item(), step)
-            logger.log("WorldModel/rep_loss", rep_loss.item(), step)
-            logger.log("WorldModel/real_kl", real_kl.item(), step)
-            logger.log("WorldModel/vae_ent", ent.item(), step)
+            logger.log("WorldModel/reg_loss", reg_loss.item(), step)
+            logger.log("WorldModel/reward_loss", reward_loss.item(), step)
+            logger.log("WorldModel/done_loss", done_loss.item(), step)
+            logger.log("WorldModel/lambda_recon", lambda_recon, step)
+            if lambda_recon > 1e-3:
+                logger.log("WorldModel/recon_loss", recon_loss.item(), step)
 
-            if step % self.video_log == 0 and not self.is_proprio:
+            if step % self.video_log == 0 and not self.is_proprio and lambda_recon > 1e-3:
                 video_index = torch.randint(obs.shape[0], (1,), device=self.device)
-                logger.log_video("Video/Observation", obs[video_index], step)
+                logger.log_video("Video/Observation", obs[video_index, 1:], step)
                 logger.log_video("Video/Reconstruction", obs_hat[video_index], step)
 
 
 class PSSM(nn.Module):
-    def __init__(self, stoch, hidden, discrete, action_dim, embed, act, device, unimix_ratio=0.01):
+    def __init__(self, hidden, action_dim, act, device):
         super().__init__()
-        self.stoch = stoch
         self.hidden = hidden
-        self.discrete = discrete
         self.action_dim = action_dim
-        self.unimix_ratio = unimix_ratio
-        self.embed = embed
         self.act = act
         self.device = device
         self.num_rnns = 2
 
-        stoch_dim = stoch * discrete
-        inp_dim = stoch_dim + action_dim
+        inp_dim = hidden + action_dim
 
         self.rnn_layer = self.init_cell()
         self.inp_layer = net.InpLayer(inp_dim, hidden, hidden, act)
-        self.ims_stat_layer = net.ImsStatLayer(hidden, stoch_dim, act)
-        self.obs_stat_layer = net.ObsStatLayer(embed, stoch_dim, act)
         
         cell_ws = {}
         for id in range(self.num_rnns):
@@ -271,89 +283,37 @@ class PSSM(nn.Module):
 
     @torch.no_grad()
     def initial(self, batch_size):
-        init = {k: v.expand(batch_size, v.shape[-1]) 
-                for k, v in self.cell_ws.items()}
-        init_deter = self.init_deter.expand(
-            batch_size, self.init_deter.shape[-1])
-        init_logit, init_stoch = self.get_init_stoch(init_deter)
-        init.update({
-            "logit": init_logit,
-            "stoch": init_stoch, 
-            "deter": init_deter, 
-        })
+        init = {k: v.expand(batch_size, v.shape[-1]) for k, v in self.cell_ws.items()}
+        init["deter"] = self.init_deter.expand(batch_size, -1)
         return init
     
-    def get_init_stoch(self, deter):
-        stats = self.suff_stats_layer("ims", deter)
-        dist = self.get_dist(stats)
-        return stats["logit"], dist.mode
-    
-    def get_deter(self, state):
-        return state["deter"]
-    
-    def get_feat(self, state):
-        stoch = state["stoch"].flatten(-2, -1)
-        return torch.cat((state["deter"], stoch), dim=-1)
-    
-    def get_flatten_stoch(self, state):
-        return state["stoch"].flatten(-2, -1)
-    
-    def get_dist(self, state):
-        probs = F.softmax(state["logit"], dim=-1)
-        probs = probs * (1 - self.unimix_ratio) + \
-            self.unimix_ratio / self.discrete
-        return OneHotCategorical(probs=probs)
-    
-    def parallel_observe(self, embed, action, is_first):
+    def parallel_observe(self, embed_z, action, is_first):
+        # embed_z: (B, L, hidden)
         init = self.initial(action.shape[0])
-        obs_stats = self.suff_stats_layer("obs", embed)
-        oracle_stoch = ste_sample(self.get_dist(obs_stats))
-
-        flatten_stoch = oracle_stoch.flatten(-2, -1)
-        concat_input = torch.cat((flatten_stoch, action), dim=-1)
+        
+        # 拼接历史真实特征 z 和 动作 a
+        concat_input = torch.cat((embed_z, action), dim=-1) 
         latent, mask = self.inp_layer(concat_input), is_first
-        deter, para_stats = self.cell_layers(latent, init, mask, True)
-
-        ims_stats = self.suff_stats_layer("ims", deter[:, :-1])
-        ims_stoch = ste_sample(self.get_dist(ims_stats))
-
-        obs_stats = {k: v[:, 1:] for k, v in obs_stats.items()}
-        obs_stoch = oracle_stoch[:, 1:]
-
-        stats = {"deter": deter, **para_stats}
-        stats = {k: v[:, :-1] for k, v in stats.items()}
-        post = {"stoch": obs_stoch, **obs_stats, **stats}
-        prior = {"stoch": ims_stoch, **ims_stats, **stats}
-        return post, prior, flatten_stoch, deter
-
-    def img_step(self, prev_state, prev_action, return_stats=False):
-        prev_stoch = prev_state["stoch"].flatten(-2, -1)
-        concat_input = torch.cat((prev_stoch, prev_action), dim=-1)
-        deter, para_stats = self.cell_layers(
-            self.inp_layer(concat_input), prev_state, None, False)
         
-        ims_stats = self.suff_stats_layer("ims", deter)
-        stoch = ste_sample(self.get_dist(ims_stats))
+        # 经过并行 RWKV 单元，输出完整的预测时序序列 z_full_pred
+        z_full_pred, para_stats = self.cell_layers(latent, init, mask, True)
         
-        if return_stats:
-            return deter, stoch, para_stats, ims_stats
-        else:
-            prior = {
-                "stoch": stoch, "deter": deter,
-                **ims_stats, **para_stats}
-            return prior
+        # 错位对齐用于计算 Dyn Loss：用 z_{0:t-1} 去预测 z_{1:t}
+        pred_z = z_full_pred[:, :-1]
+        target_z = embed_z[:, 1:]
+        
+        return z_full_pred, pred_z, target_z, para_stats
 
-    def suff_stats_layer(self, name, x):
-        if name == "ims":
-            x = self.ims_stat_layer(x)
-        elif name == "obs":
-            x = self.obs_stat_layer(x)
-        else:
-            raise NotImplementedError
+    def img_step(self, prev_z, prev_action, state):
+        # 单步推演 (用于 imagine_data 梦境阶段)
+        concat_input = torch.cat((prev_z, prev_action), dim=-1)
+        latent = self.inp_layer(concat_input)
         
-        logit = x.unflatten(-1, (self.stoch, self.discrete))
-        return {"logit": logit}
-    
+        z_hat, next_state = self.cell_layers(latent, state, None, False)
+        next_state["deter"] = z_hat # 将当前输出作为 RNN 内部记录更新
+        
+        return z_hat, next_state
+
     def cell_layers(self, input, state, is_first, is_parallel):        
         if is_parallel:
             deter, is_first = swap(input), swap(is_first)
@@ -370,22 +330,3 @@ class PSSM(nn.Module):
             deter = swap(deter)
             stats = {k: swap(v) for k, v in stats.items()}
         return torch.tanh(deter), stats
-
-    def kl_loss(self, post, prior, free):
-        kld = torchd.kl.kl_divergence
-        dist = lambda x: self.get_dist(x)
-        sg = lambda x: {k: v.detach() for k, v in x.items()}
-
-        rep_loss = kld(dist(post), dist(sg(prior)))
-        dyn_loss = kld(dist(sg(post)), dist(prior))
-
-        rep_loss = rep_loss.sum(dim=-1).mean()
-        dyn_loss = dyn_loss.sum(dim=-1).mean()
-
-        real_kl = dyn_loss
-        ent = dist(post).entropy()
-        ent = ent.sum(dim=-1).mean()
-
-        rep_loss = torch.clip(rep_loss, min=free)
-        dyn_loss = torch.clip(dyn_loss, min=free)
-        return dyn_loss, rep_loss, real_kl, ent
