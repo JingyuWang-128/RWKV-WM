@@ -65,8 +65,6 @@ def load_config(config_path):
     conf.Models.NumBin = 0
     conf.Models.MaxBin = 0
     conf.Models.Act = ""
-    conf.Models.Stoch = 0
-    conf.Models.Discrete = 0
     conf.Models.Gamma = 1.0
     conf.Models.Lambda = 0.0
     conf.Models.Tau = 0.0

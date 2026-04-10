@@ -21,7 +21,7 @@ class AgentLayer(nn.Module):
 
 
 class Encoder(nn.Module):
-    def __init__(self, width, in_ch, stem_ch, min_res, act):
+    def __init__(self, width, in_ch, stem_ch, min_res, act, latent_dim=1024):
         super().__init__()
         feature_width = width // 2
         channels = stem_ch
@@ -43,7 +43,7 @@ class Encoder(nn.Module):
         self.attn = nn.MultiheadAttention(embed_dim=self.out_ch, num_heads=4, batch_first=True)
         # 新增：投影到纯潜空间维度 z_t
         self.head = nn.Linear(self.out_ch * (min_res ** 2), latent_dim)
-        self.embed = self.out_ch * (min_res ** 2)
+        self.embed = latent_dim
 
     def forward(self, x):
         shape = x.shape[:2]
@@ -65,9 +65,9 @@ class Encoder(nn.Module):
 
 
 class Decoder(nn.Module):
-    def __init__(self, stoch, out_ch, in_ch, stem_ch, min_res, act):
+    def __init__(self, in_dim, out_ch, in_ch, stem_ch, min_res, act):
         super().__init__()
-        backbone = [Rearrange(stoch, out_ch, min_res, act())]
+        backbone = [Rearrange(in_dim, out_ch, min_res, act())]
 
         channels = out_ch
         feat_width = min_res
@@ -107,9 +107,9 @@ class ProprioEncoder(nn.Module):
 
 
 class ProprioDecoder(nn.Module):
-    def __init__(self, stoch, size, hidden, num_layer, act):
+    def __init__(self, in_dim, size, hidden, num_layer, act):
         super().__init__()
-        backbone = [FeedForwardLayer(stoch, hidden, act())]
+        backbone = [FeedForwardLayer(in_dim, hidden, act())]
         for _ in range(num_layer):            
             backbone += [FeedForwardLayer(hidden, hidden, act())]
         backbone += [nn.Linear(hidden, size)]
@@ -149,33 +149,6 @@ class InpLayer(nn.Module):
         x = self.head(x)
         return x
     
-
-class ImsStatLayer(nn.Module):
-    def __init__(self, inp_size, size, act):
-        super().__init__()
-        self.backbone = GatingLayer(inp_size, act())
-        self.head = nn.Linear(inp_size, size)
-        self.norm = BatchNorm1d(size)
-
-    def forward(self, inp):
-        x = self.backbone(inp)
-        x = self.head(x)
-        x = self.norm(x)
-        return x
-
-
-class ObsStatLayer(nn.Module):
-    def __init__(self, inp_size, size, act):
-        super().__init__()
-        self.head = nn.Linear(inp_size, size, bias=False)
-        self.norm = BatchNorm1d(size)
-
-    def forward(self, inp):
-        x = self.head(inp)
-        x = self.norm(x)
-        return x
-
-
 class MixingLayer(nn.Module):
     def __init__(self, inp_size, hidden, bias=True):
         super().__init__()

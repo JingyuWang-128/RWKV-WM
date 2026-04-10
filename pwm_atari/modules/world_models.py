@@ -114,8 +114,10 @@ class ParallelWorldModel(nn.Module):
                 mask = (is_first_t > 0.5).to(torch.bool).view(-1)
                 
                 for key, val in state.items():
-                    cond = mask.bool().view(-1, *([1] * (val.dim() - 1)))
-                    state[key] = torch.where(cond, init_state[key], val)
+                    # 核心修复：只重置那些存在于初始化字典(RNN状态)中的键，跳过 'z'
+                    if key in init_state: 
+                        cond = mask.bool().view(-1, *([1] * (val.dim() - 1)))
+                        state[key] = torch.where(cond, init_state[key], val)
 
             state["z"] = true_z
             feat = true_z
@@ -143,8 +145,8 @@ class ParallelWorldModel(nn.Module):
             self.action_buffer = init_zeros(action_size)
     
     @torch.no_grad()
-    def get_video_frame(self, z_sequence, index):
-        pred_frame = self.decoder(z_sequence[index, None])
+    def get_video_frame(self, curr_z, index):
+        pred_frame = self.decoder(curr_z[index, None])
         return pred_frame
 
     @torch.no_grad() 
@@ -167,7 +169,7 @@ class ParallelWorldModel(nn.Module):
             for t in range(horizon): 
                 if logger is not None:
                     if step % self.video_log == 0:
-                        pred_video += [self.get_video_frame(self.z_buffer[:, :t+1], video_index)[:, -1:]]
+                        pred_video += [self.get_video_frame(curr_z, video_index)]
     
                 self.action_buffer[:, t] = agent.sample(curr_z)
                 curr_z, state = self.dynamic.img_step(curr_z, self.action_buffer[:, t], state)

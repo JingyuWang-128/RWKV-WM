@@ -27,8 +27,6 @@ Models:
   NumBin: 255
   MaxBin: 20
   Act: "SiLU"
-  Stoch: 32
-  Discrete: 32
   Gamma: 0.997
   Lambda: 0.95
   Tau: 0.02

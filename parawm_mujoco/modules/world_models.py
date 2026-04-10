@@ -29,8 +29,6 @@ class ParallelWorldModel(nn.Module):
                  is_proprio,
                  obs_shape,
                  action_dim,
-                 stoch,      # 保留参数签名以兼容原 config 文件，但不再作为离散维度使用
-                 discrete,   # 同上
                  hidden,     # hidden 将直接作为纯潜空间的特征维度 latent_dim
                  stem_ch,
                  min_res,

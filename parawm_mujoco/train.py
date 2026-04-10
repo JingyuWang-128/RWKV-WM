@@ -192,8 +192,6 @@ def build_world_model(conf, obs_type, env, action_dim, act, device, rwkv_kernel=
         NotImplementedError
     return ParallelWorldModel(conf.JointTrainAgent.VideoLogStep,
                               is_proprio, obs_shape, action_dim,
-                              conf.Models.Stoch,
-                              conf.Models.Discrete, 
                               conf.Models.Hidden,
                               conf.Models.WorldModel.Stem,
                               conf.Models.WorldModel.MinRes,
@@ -217,7 +215,6 @@ def build_world_model(conf, obs_type, env, action_dim, act, device, rwkv_kernel=
 
 def build_agent(conf, action_dim, act, device):
     return ActorCriticAgent(action_dim,
-                            conf.Models.Stoch * conf.Models.Discrete + \
                             conf.Models.Hidden,
                             conf.Models.Hidden,
                             conf.Models.Agent.EntropyCoef,
@@ -258,8 +255,8 @@ if __name__ == "__main__":
 
     # wandb logger
     wandb.init(
-        project="Mujoco" + f"-{args.obs_type}",
-        entity="yanlangzheng",
+        project="rwkv_jepa_mujoco",
+        entity="2797128797-university-of-electronic-science-and-technolo",
         group=f"{args.env_name}",
         name=f"PWM-{args.env_name}"
     )
