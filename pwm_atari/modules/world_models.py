@@ -29,6 +29,7 @@ class ParallelWorldModel(nn.Module):
                  video_log,
                  obs_shape,
                  num_action,
+                 total_train_steps,
                  hidden,     # hidden 直接作为纯潜空间的 latent_dim
                  stem_ch,
                  min_res,
@@ -64,6 +65,7 @@ class ParallelWorldModel(nn.Module):
         self.batch_size = -1
         self.horizon = -1
         self.video_log = video_log
+        self.anneal_steps = float(total_train_steps) * 0.3
 
         self.device_type = "cuda" if "cuda" in device else "cpu"
         self.tensor_dtype = torch.float16 if use_amp else torch.float32
@@ -186,6 +188,25 @@ class ParallelWorldModel(nn.Module):
         if logger is not None:
             if step % self.video_log == 0:
                 logger.log_video("Video/Imagination", torch.cat(pred_video, dim=1), step)
+            # Diagnostics for imagination stability.
+            logger.log("WorldModel/imag_discount_mean", discount.mean().item(), step)
+            logger.log("WorldModel/imag_discount_std", discount.std().item(), step)
+            logger.log("WorldModel/imag_discount_low_ratio", (discount < 0.1).float().mean().item(), step)
+            logger.log("WorldModel/imag_discount_zero_ratio", (discount == 0).float().mean().item(), step)
+
+            action_long = self.action_buffer.long()
+            logger.log("WorldModel/imag_action_unique_ratio",
+                       action_long.unique().numel() / float(self.num_action),
+                       step)
+            action_probs = torch.bincount(action_long.flatten(), minlength=self.num_action).float()
+            action_probs = action_probs / action_probs.sum().clamp_min(1.0)
+            action_entropy = -(action_probs * torch.log(action_probs.clamp_min(1e-8))).sum()
+            logger.log("WorldModel/imag_action_entropy", action_entropy.item(), step)
+
+            logger.log("WorldModel/imag_weight_mean", weight.mean().item(), step)
+            logger.log("WorldModel/imag_weight_std", weight.std().item(), step)
+            logger.log("WorldModel/imag_weight_last_mean", weight[:, -1].mean().item(), step)
+            logger.log("WorldModel/imag_weight_low_ratio", (weight < 0.1).float().mean().item(), step)
 
         return feat, self.action_buffer, discount, reward, weight
 
@@ -213,8 +234,7 @@ class ParallelWorldModel(nn.Module):
             task_loss = done_loss + reward_loss
             
             # --- 损失 4：退火式图像重建 ---
-            total_anneal_steps = 200000.0
-            lambda_recon = 0.5 * (1.0 + math.cos(math.pi * min(1.0, step / total_anneal_steps)))
+            lambda_recon = 0.5 * (1.0 + math.cos(math.pi * min(1.0, step / self.anneal_steps)))
             
             recon_loss = torch.tensor(0.0, device=self.device)
             if lambda_recon > 1e-3: 

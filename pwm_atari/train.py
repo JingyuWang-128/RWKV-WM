@@ -211,6 +211,7 @@ def build_world_model(conf, num_action, act, device):
     return ParallelWorldModel(conf.JointTrainAgent.VideoLogStep,
                               conf.BasicSettings.ObsShape,
                               num_action,
+                              conf.JointTrainAgent.SampleMaxSteps // conf.JointTrainAgent.NumEnvs,
                               conf.Models.Hidden,
                               conf.Models.WorldModel.Stem,
                               conf.Models.WorldModel.MinRes,

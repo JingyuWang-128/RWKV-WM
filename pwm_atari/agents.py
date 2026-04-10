@@ -154,6 +154,7 @@ class ActorCriticAgent(nn.Module):
         self.update_slow_critic()
 
         if logger is not None:
+            td_error = lambda_return - slow_value[:, :-1]
             logger.log('ActorCritic/value_loss', value_loss.mean().item(), step)
             logger.log('ActorCritic/slow_reg_loss', slow_reg_loss.mean().item(), step)
             logger.log('ActorCritic/policy_loss', policy_loss.mean().item(), step)
@@ -168,6 +169,12 @@ class ActorCriticAgent(nn.Module):
             logger.log('ActorCritic/norm_adv', norm_adv.mean().item(), step)
             logger.log('ActorCritic/norm_adv_abs_mean', norm_adv.abs().mean().item(), step)
             logger.log('ActorCritic/norm_adv_std', norm_adv.std().item(), step)
+            logger.log('ActorCritic/td_error_mean', td_error.mean().item(), step)
+            logger.log('ActorCritic/td_error_std', td_error.std().item(), step)
+            logger.log('ActorCritic/td_error_abs_mean', td_error.abs().mean().item(), step)
+            logger.log('ActorCritic/td_error_p10', torch.quantile(td_error, 0.10).item(), step)
+            logger.log('ActorCritic/td_error_p50', torch.quantile(td_error, 0.50).item(), step)
+            logger.log('ActorCritic/td_error_p90', torch.quantile(td_error, 0.90).item(), step)
             logger.log('ActorCritic/policy_to_entropy_ratio',
                        abs(policy_loss.mean().item()) / max(self.entropy_coef * entropy_bonus.mean().item(), 1e-8),
                        step)
