@@ -24,6 +24,7 @@ class ActorCriticAgent(nn.Module):
                  hidden,
                  entropy_coef,
                  num_sample,
+                 total_train_steps,
                  num_bin,
                  max_bin,
                  min_per,
@@ -42,12 +43,15 @@ class ActorCriticAgent(nn.Module):
         self.device = device
         self.num_action = num_action
         self.entropy_coef = entropy_coef
+        self.entropy_coef_min = entropy_coef * 0.1
+        self.total_train_steps = max(1, int(total_train_steps))
         self.num_sample = num_sample
         self.min_per = min_per
         self.max_per = max_per
         self.gamma = gamma
         self.lambd = lambd
         self.tau = tau
+        self.slow_reg_coef = 0.1
 
         self.device_type = "cuda" if "cuda" in device else "cpu"
         self.tensor_dtype = torch.float16 if use_amp else torch.float32
@@ -112,6 +116,14 @@ class ActorCriticAgent(nn.Module):
         reg = -slow_target * torch.log_softmax(logits, dim=-1)
         reg = reg.sum(dim=-1, keepdim=True)
         return torch.mean(reg * weight)
+
+    def _get_entropy_coef(self, step):
+        if step is None:
+            return self.entropy_coef
+        anneal_span = max(1.0, self.total_train_steps * 0.3)
+        progress = min(1.0, step / anneal_span)
+        cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
+        return self.entropy_coef_min + (self.entropy_coef - self.entropy_coef_min) * cosine
     
     def update(self, feat, action, discount, reward, weight, logger=None, step=None):
         self.train()
@@ -131,15 +143,17 @@ class ActorCriticAgent(nn.Module):
                     swap_rew, swap_val[:-1], swap_val[1:], swap_disc, self.lambd))
                 adv = lambda_return - slow_value[:, :-1]
                 scale = self.get_scale(lambda_return)
-                norm_adv = adv / scale
+                adv_std = adv.std().clamp_min(1e-4)
+                norm_adv = (adv - adv.mean()) / adv_std
 
             value_loss = torch.mean(self.twohot_loss(raw_value[:, :-1], lambda_return, reduce=False) * weight)
             slow_reg_loss = self._slow_critic_reg_loss(raw_value[:, :-1], slow_raw_value[:, :-1], weight)
-            critic_loss = value_loss + slow_reg_loss
+            critic_loss = value_loss + self.slow_reg_coef * slow_reg_loss
 
             policy_loss = -torch.mean(log_prob * norm_adv.detach() * weight.detach())
             entropy_bonus = torch.mean(entropy * weight.detach())
-            actor_loss = policy_loss - self.entropy_coef * entropy_bonus
+            curr_entropy_coef = self._get_entropy_coef(step)
+            actor_loss = policy_loss - curr_entropy_coef * entropy_bonus
 
             total_loss = critic_loss + actor_loss
 
@@ -160,6 +174,7 @@ class ActorCriticAgent(nn.Module):
             logger.log('ActorCritic/policy_loss', policy_loss.mean().item(), step)
             logger.log('ActorCritic/actor_loss', actor_loss.mean().item(), step)
             logger.log('ActorCritic/entropy', entropy_bonus.mean().item(), step)
+            logger.log('ActorCritic/entropy_coef', curr_entropy_coef, step)
             logger.log('ActorCritic/scale', scale, step)
             logger.log('ActorCritic/lambda_return', lambda_return.mean().item(), step)
             logger.log('ActorCritic/lambda_return_std', lambda_return.std().item(), step)
@@ -176,5 +191,5 @@ class ActorCriticAgent(nn.Module):
             logger.log('ActorCritic/td_error_p50', torch.quantile(td_error, 0.50).item(), step)
             logger.log('ActorCritic/td_error_p90', torch.quantile(td_error, 0.90).item(), step)
             logger.log('ActorCritic/policy_to_entropy_ratio',
-                       abs(policy_loss.mean().item()) / max(self.entropy_coef * entropy_bonus.mean().item(), 1e-8),
+                       abs(policy_loss.mean().item()) / max(curr_entropy_coef * entropy_bonus.mean().item(), 1e-8),
                        step)

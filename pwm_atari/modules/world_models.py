@@ -208,6 +208,15 @@ class ParallelWorldModel(nn.Module):
             logger.log("WorldModel/imag_weight_last_mean", weight[:, -1].mean().item(), step)
             logger.log("WorldModel/imag_weight_low_ratio", (weight < 0.1).float().mean().item(), step)
 
+            # Diagnostics for imagined reward quality/stability.
+            logger.log("WorldModel/imag_reward_mean", reward.mean().item(), step)
+            logger.log("WorldModel/imag_reward_std", reward.std().item(), step)
+            logger.log("WorldModel/imag_reward_var", reward.var().item(), step)
+            logger.log("WorldModel/imag_reward_abs_mean", reward.abs().mean().item(), step)
+            logger.log("WorldModel/imag_reward_p10", torch.quantile(reward, 0.10).item(), step)
+            logger.log("WorldModel/imag_reward_p50", torch.quantile(reward, 0.50).item(), step)
+            logger.log("WorldModel/imag_reward_p90", torch.quantile(reward, 0.90).item(), step)
+
         return feat, self.action_buffer, discount, reward, weight
 
     def update(self, agent, obs, action, reward, done, is_first, logger=None, step=None):

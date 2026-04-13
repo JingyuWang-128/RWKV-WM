@@ -29,6 +29,7 @@ class ParallelWorldModel(nn.Module):
                  is_proprio,
                  obs_shape,
                  action_dim,
+                 total_train_steps,
                  hidden,     # hidden 将直接作为纯潜空间的特征维度 latent_dim
                  stem_ch,
                  min_res,
@@ -64,6 +65,7 @@ class ParallelWorldModel(nn.Module):
         self.horizon = -1
         self.video_log = video_log
         self.is_proprio = is_proprio
+        self.anneal_steps = float(total_train_steps) * 0.3
 
         self.device_type = "cuda" if "cuda" in device else "cpu"
         self.tensor_dtype = torch.float16 if use_amp else torch.float32
@@ -217,8 +219,7 @@ class ParallelWorldModel(nn.Module):
             task_loss = done_loss + reward_loss
             
             # --- 损失 4：退火式图像重建 ---
-            total_anneal_steps = 200000.0
-            lambda_recon = 0.5 * (1.0 + math.cos(math.pi * min(1.0, step / total_anneal_steps)))
+            lambda_recon = 0.5 * (1.0 + math.cos(math.pi * min(1.0, step / self.anneal_steps)))
             
             recon_loss = torch.tensor(0.0, device=self.device)
             if lambda_recon > 1e-3: 

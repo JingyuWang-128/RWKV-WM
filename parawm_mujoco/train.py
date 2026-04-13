@@ -192,6 +192,7 @@ def build_world_model(conf, obs_type, env, action_dim, act, device, rwkv_kernel=
         NotImplementedError
     return ParallelWorldModel(conf.JointTrainAgent.VideoLogStep,
                               is_proprio, obs_shape, action_dim,
+                              conf.JointTrainAgent.SampleMaxSteps // conf.JointTrainAgent.NumEnvs,
                               conf.Models.Hidden,
                               conf.Models.WorldModel.Stem,
                               conf.Models.WorldModel.MinRes,

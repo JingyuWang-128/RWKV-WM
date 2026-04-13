@@ -240,6 +240,7 @@ def build_agent(conf, num_action, act, device):
                             conf.Models.Hidden,
                             conf.Models.Agent.EntropyCoef,
                             conf.Models.NumSample,
+                            conf.JointTrainAgent.SampleMaxSteps // conf.JointTrainAgent.NumEnvs,
                             conf.Models.NumBin,
                             conf.Models.MaxBin,
                             conf.Models.Agent.MinPer,
@@ -286,7 +287,7 @@ if __name__ == "__main__":
 
     # set seed
     seed_np_torch(seed=args.seed)
-    wandb_name = args.wandb_name or f"PWM-{args.env_name}-seed{args.seed}"
+    wandb_name = args.wandb_name or f"PWM-{args.env_name}-seed{args.seed}-v2"
     wandb.init(
         project="rwkv_jepa_atari",
         group=f"{args.env_name}",
