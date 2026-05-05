@@ -1,0 +1,84 @@
+Task: "JointTrainAgent"
+
+BasicSettings:
+  Seed: 0
+  ObsShape: (64, 64, 3)
+  UseAmp: False
+  FrameSkip: 4
+
+JointTrainAgent:
+  SampleMaxSteps: 102000
+  BufferMaxLength: 102000
+  BufferWarmUp: 1024
+  NumEnvs: 1
+  BatchSize: 16
+  BatchLength: 64
+  ImagineBatchSize: 16
+  ImagineContext: 64
+  ImagineHorizon: 8  # Reduced from 15 to limit error accumulation
+  TrainModelEverySteps: 1
+  TrainAgentEverySteps: 1
+  AgentUpdate: 1
+  SaveEverySteps: 2000
+  VideoLogStep: 2000
+
+Models:
+  Hidden: 512
+  NumBin: 255
+  MaxBin: 20
+  NumSample: 16
+  Act: "SiLU"
+  Stoch: 32
+  Discrete: 32
+  Gamma: 0.997
+  Lambda: 0.95
+  Tau: 0.01
+
+  WorldModel:
+    Stem: 32
+    MinRes: 4
+    DynScale: 0.5
+    RepScale: 0.1
+    KLFree: 1.0
+    LR: 1e-4
+    Eps: 1e-8
+
+  Agent:
+    EntropyCoef: 3e-4
+    LR: 3e-5
+    Eps: 1e-5
+    MinPer: 0.05
+    MaxPer: 0.95
+    EMADecay: 0.99
+
+  # JEPA+RWKV World Model Configuration (used when model_type=jepa_rwkv)
+  JEPA:
+    # Embedding dimension for JEPA latent space (increased from 512 for better capacity)
+    EmbedDim: 1024
+    # Number of RWKV-6 layers in predictor
+    NumRWKV6Layers: 4
+    # Number of attention heads for RWKV-6
+    NumHeads: 8
+    # Whether to use self-attention after CNN encoder
+    UseSelfAttention: true
+
+    # Decoder configuration (optional reconstruction loss)
+    UseDecoder: true
+    DecoderWeight: 1.0
+    DecoderWeightDecay: 1.0  # No decay - maintain reconstruction constraint for visual grounding
+
+    # SIGReg configuration (prevents representation collapse)
+    SigRegWeight: 0.01  # Reduced from 0.09 to allow more embedding diversity
+    SigRegKnots: 17
+    SigRegNumProj: 1024
+
+    # Contrastive loss configuration (InfoNCE for temporal distinction)
+    ContrastiveWeight: 0.1
+    ContrastiveTemperature: 0.1
+
+    # Multi-step prediction loss configuration (reduces compounding errors)
+    MultiStepWeight: 0.5
+    MultiStepHorizon: 3
+
+    # EMA target encoder (optional, use --use_ema_target flag to enable)
+    TargetEMADecay: 0.99

@@ -1,0 +1,100 @@
+# JEPA-RWKV World Model Configuration for MuJoCo
+# Uses deterministic embeddings with SIGReg instead of VAE-style stochastic latents
+# Supports both proprioceptive (state-based) and visual observations
+
+Task: "JointTrainAgent"
+
+BasicSettings:
+  Seed: 0
+  ObsShape: (64, 64, 3)  # For visual. For proprio, this is set at runtime
+  UseAmp: False
+  FrameSkip: 2
+
+JointTrainAgent:
+  SampleMaxSteps: 101000
+  BufferMaxLength: 101000
+  BufferWarmUp: 1024
+  NumEnvs: 1
+  BatchSize: 16
+  BatchLength: 64
+  ImagineBatchSize: 16
+  ImagineContext: 64
+  ImagineHorizon: 15
+  TrainModelEverySteps: 1
+  TrainAgentEverySteps: 1
+  AgentUpdate: 1
+  SaveEverySteps: 2000
+  VideoLogStep: 2000
+
+# Use JEPA world model instead of VAE-based ParallelWorldModel
+WorldModelType: "jepa"
+
+Models:
+  # Core dimensions - JEPA uses only hidden (no stoch+hidden concatenation)
+  Hidden: 512
+  NumBin: 255
+  MaxBin: 20
+  Act: "SiLU"
+
+  # Discount and TD-lambda
+  Gamma: 0.997
+  Lambda: 0.95
+  Tau: 0.02
+
+  # ==================== JEPA World Model ====================
+  WorldModel:
+    # CNN Encoder (for visual observations)
+    Stem: 32            # Initial CNN channels
+    MinRes: 4           # Minimum spatial resolution
+
+    # Learning rate
+    LR: 1e-4
+    Eps: 1e-8
+
+    # RWKV Predictor
+    RWKVLayers: 4       # Number of RWKV blocks
+    RWKVHeads: 8        # Attention heads per block
+    RWKVExpandFactor: 4 # FFN expansion ratio
+
+    # Self-Attention (optional, after encoder)
+    UseSelfAttention: false
+    SelfAttnHeads: 4
+
+    # SIGReg Regularization (prevents feature collapse)
+    SIGRegWeight: 0.09
+    SIGRegKnots: 17
+    SIGRegNumProj: 1024
+
+    # Decoder (optional, for physical consistency)
+    # Weight decays from initial to minimum over DecaySteps
+    DecoderWeightInit: 1.0    # Initial reconstruction loss weight
+    DecoderWeightMin: 0.0     # Minimum weight (0 = pure JEPA)
+    DecoderDecaySteps: 50000  # Steps to decay from init to min
+    DecoderDecayType: "linear" # linear, exponential, or cosine
+
+  # ==================== Actor-Critic Agent ====================
+  Agent:
+    EntropyCoef: 3e-4
+    LR: 3e-5
+    Eps: 1e-5
+    MinStd: 0.1         # Minimum action std (continuous actions)
+    MaxStd: 1.0         # Maximum action std
+    MinPer: 0.05
+    MaxPer: 0.95
+    EMADecay: 0.99
+
+# MuJoCo-Specific Notes:
+# ----------------------
+# Proprioceptive vs Visual:
+#   - Use --is_proprio flag for state-based observations
+#   - Visual mode uses CNN encoder (64x64 images)
+#   - Proprio mode uses MLP encoder (state vectors)
+#
+# Continuous Actions:
+#   - MuJoCo uses continuous action spaces
+#   - Actions are encoded via ContinuousActionEncoder before RWKV
+#   - Agent outputs mean and std for TanhNormal distribution
+#
+# SIGReg for MuJoCo:
+#   - May need lower weight (0.05-0.09) for stable training
+#   - Proprio observations are lower dimensional, may need tuning
