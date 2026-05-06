@@ -108,6 +108,7 @@ def load_config(config_path):
     conf.JointTrainAgent.VideoLogStep = 0
 
     conf.defrost()
+    conf.set_new_allowed(True)
     conf.merge_from_file(config_path)
     conf.freeze()
 

@@ -8,9 +8,9 @@ import torch.nn.functional as F
 import torch.distributions as torchd
 from torch.distributions import OneHotCategorical
 
-import modules.functions_losses as func
-import modules.parallel_rnns as rnn
-import modules.networks as net
+import core.functions_losses as func
+import core.parallel_rnns as rnn
+import core.networks as net
 
 # Add parent directory to path for shared modules
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))

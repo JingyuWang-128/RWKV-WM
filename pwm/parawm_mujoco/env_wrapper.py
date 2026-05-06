@@ -123,7 +123,7 @@ class DeepMindControl(Env):
             return reward, termination, truncation, info
 
 
-    def reset(self):
+    def reset(self, **kwargs):
         timestep = self._env.reset()
         if self._is_proprio:
             observation = _flatten_obs(timestep.observation)

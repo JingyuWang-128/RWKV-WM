@@ -13,3 +13,7 @@ r2dreamer/envs/__pycache__
 r2dreamer/logdir
 r2dreamer/optim/__pycache__
 r2dreamer/README.md
+pwm/parawm_mujoco/wandb
+pwm/parawm_mujoco/ckpt
+pwm/modules/__pycache__
+pwm/parawm_mujoco/core/__pycache__

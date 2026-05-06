@@ -16,7 +16,7 @@ import env_wrapper
 from utils import Logger, load_config
 from replay_buffer import ReplayBuffer, ProprioReplayBuffer
 from agents import ActorCriticAgent
-from modules.world_models import ParallelWorldModel, JEPAWorldModel
+from core.world_models import ParallelWorldModel, JEPAWorldModel
 
 
 permute = lambda x: x.permute(0, 3, 1, 2)[:, None]
@@ -34,8 +34,6 @@ def build_single_visual_env(env_name, image_size, frame_skip, seed):
 
 
 def build_vec_visual_env(env_name, image_size, num_envs, frame_skip, seed):
-    # lambda pitfall refs to: 
-    # https://python.plainenglish.io/python-pitfalls-with-variable-capture-dcfc113f39b7
     def lambda_generator(env_name, image_size, frame_skip):
         return lambda: build_single_visual_env(env_name, image_size, frame_skip, seed)
     env_fns = []
@@ -54,8 +52,6 @@ def build_single_proprio_env(env_name, frame_skip, seed):
 
 
 def build_vec_proprio_env(env_name, num_envs, frame_skip, seed):
-    # lambda pitfall refs to: 
-    # https://python.plainenglish.io/python-pitfalls-with-variable-capture-dcfc113f39b7
     def lambda_generator(env_name, frame_skip):
         return lambda: build_single_proprio_env(env_name, frame_skip, seed)
     env_fns = []
@@ -100,8 +96,6 @@ def joint_train_world_model_agent(env_name,
     # create ckpt dir
     os.makedirs(f"ckpt/{args.n}", exist_ok=True)
 
-    # build vec env, not useful in the Atari100k setting
-    # but when the max_steps is large, you can use parallel envs to speed up
     if "proprio" in obs_type:
         vec_env = build_vec_proprio_env(env_name, num_envs, frame_skip, seed)
     elif "visual" in obs_type:
@@ -109,9 +103,6 @@ def joint_train_world_model_agent(env_name,
     else:
         NotImplementedError
     print("Current env: " + colorama.Fore.YELLOW + f"{env_name}" + colorama.Style.RESET_ALL)
-
-    # world_model = torch.compile(world_model)
-    # agent = torch.compile(agent)
 
     # reset envs and variables
     world_model.eval()
@@ -131,7 +122,7 @@ def joint_train_world_model_agent(env_name,
             with torch.no_grad():
                 world_model.eval()
                 agent.eval()
-                feat, state = world_model.get_inference_feat(state, obs, is_first)
+                feat, state = world_model.get_inference_feat(state, current_obs, is_first)
                 env_action, action = agent.sample_as_env_action(feat, greedy=False)
                 state = world_model.update_inference_state(state, action)
         else:
@@ -220,10 +211,7 @@ def build_jepa_world_model(conf, obs_type, env, action_dim, act, device, use_ema
     else:
         raise NotImplementedError
 
-    # Get world model config
     wm_conf = conf.Models.WorldModel
-
-    # Get JEPA-specific config with defaults
     rwkv_layers = getattr(wm_conf, 'RWKVLayers', 4)
     rwkv_heads = getattr(wm_conf, 'RWKVHeads', 8)
     rwkv_expand_factor = getattr(wm_conf, 'RWKVExpandFactor', 4)
@@ -255,7 +243,6 @@ def build_jepa_world_model(conf, obs_type, env, action_dim, act, device, use_ema
         use_amp=conf.BasicSettings.UseAmp,
         act=act,
         device=device,
-        # JEPA-specific parameters
         use_self_attention=use_self_attention,
         self_attn_heads=self_attn_heads,
         sigreg_weight=sigreg_weight,
@@ -272,7 +259,6 @@ def build_jepa_world_model(conf, obs_type, env, action_dim, act, device, use_ema
 
 
 def build_agent(conf, action_dim, act, device, feat_dim=None):
-    # Use provided feat_dim or default to original calculation
     if feat_dim is None:
         feat_dim = conf.Models.Stoch * conf.Models.Discrete + conf.Models.Hidden
     return ActorCriticAgent(action_dim,
@@ -322,13 +308,12 @@ if __name__ == "__main__":
     model_name = "JEPA-RWKV" if args.model_type == "jepa" else "PWM"
     wandb.init(
         project="Mujoco" + f"-{args.obs_type}",
-        entity="dcd_rl",
+        entity="2797128797-university-of-electronic-science-and-technolo",
         group=f"{args.env_name}",
         name=f"{model_name}-{args.env_name}"
     )
     logger = Logger()
 
-    # distinguish between tasks, other debugging options are removed for simplicity
     if conf.Task == "JointTrainAgent":
         if "proprio" in args.obs_type:
             dummy_env = build_single_proprio_env(
@@ -346,16 +331,13 @@ if __name__ == "__main__":
         act = getattr(nn, conf.Models.Act)
 
         if args.model_type == "jepa":
-            # Build JEPA-RWKV world model
             print(colorama.Fore.CYAN + "Using JEPA-RWKV World Model" + colorama.Style.RESET_ALL)
             world_model = build_jepa_world_model(
                 conf, args.obs_type, dummy_env, action_dim, act, args.device,
                 use_ema_target=args.use_ema_target
             )
-            # Agent uses world model's feat_dim (embed_dim for JEPA)
             agent = build_agent(conf, action_dim, act, args.device, feat_dim=world_model.feat_dim)
         else:
-            # Build original PWM world model
             print(colorama.Fore.CYAN + "Using original PWM World Model" + colorama.Style.RESET_ALL)
             world_model = build_world_model(conf, args.obs_type, dummy_env, action_dim, act, args.device)
             agent = build_agent(conf, action_dim, act, args.device)

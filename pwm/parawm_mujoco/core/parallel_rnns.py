@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 import scan
-import modules.networks as net
+import core.networks as net
 
 
 class RNNCell(nn.Module):

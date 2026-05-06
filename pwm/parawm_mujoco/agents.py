@@ -5,8 +5,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions import normal, independent
 
-import modules.networks as net
-import modules.functions_losses as func
+import core.networks as net
+import core.functions_losses as func
 import utils
 import scan
 
@@ -80,7 +80,8 @@ class ActorCriticAgent(nn.Module):
 
     def sample_as_env_action(self, feat, greedy=False):
         action = self.sample(feat, greedy)
-        env_action = action.detach().cpu().numpy()
+        clipped_action = torch.clip(action, -1.0, 1.0)
+        env_action = clipped_action.detach().cpu().numpy()
         return env_action, action
 
     @torch.no_grad()
