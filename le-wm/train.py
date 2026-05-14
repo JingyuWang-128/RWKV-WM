@@ -12,6 +12,7 @@ from omegaconf import OmegaConf, open_dict
 
 from jepa import JEPA
 from module import ARPredictor, Embedder, MLP, SIGReg
+from rwkv_module import RWKV_ARPredictor
 from utils import get_column_normalizer, get_img_preprocessor, ModelObjectCallBack
 
 
@@ -91,13 +92,27 @@ def run(cfg):
     embed_dim = cfg.wm.get("embed_dim", hidden_dim)
     effective_act_dim = cfg.data.dataset.frameskip * cfg.wm.action_dim
 
-    predictor = ARPredictor(
-        num_frames=cfg.wm.history_size,
-        input_dim=embed_dim,
-        hidden_dim=hidden_dim,
-        output_dim=hidden_dim,
-        **cfg.predictor,
-    )
+    # Select predictor type based on config
+    predictor_type = cfg.predictor.get("type", "transformer").lower()
+    predictor_kwargs = {
+        "num_frames": cfg.wm.history_size,
+        "input_dim": embed_dim,
+        "hidden_dim": hidden_dim,
+        "output_dim": hidden_dim,
+        "depth": cfg.predictor.depth,
+        "heads": cfg.predictor.heads,
+        "mlp_dim": cfg.predictor.mlp_dim,
+        "dim_head": cfg.predictor.dim_head,
+        "dropout": cfg.predictor.dropout,
+        "emb_dropout": cfg.predictor.emb_dropout,
+    }
+
+    if predictor_type == "rwkv":
+        print(f"[INFO] Using RWKV-6 Predictor")
+        predictor = RWKV_ARPredictor(**predictor_kwargs)
+    else:
+        print(f"[INFO] Using Transformer Predictor")
+        predictor = ARPredictor(**predictor_kwargs)
 
     action_encoder = Embedder(input_dim=effective_act_dim, emb_dim=embed_dim)
     
@@ -168,11 +183,15 @@ def run(cfg):
         enable_checkpointing=True,
     )
 
+    ckpt_path = run_dir / f"{cfg.output_model_name}_weights.ckpt"
+    
+    actual_ckpt_path = ckpt_path if ckpt_path.exists() else None
+    
     manager = spt.Manager(
         trainer=trainer,
         module=world_model,
         data=data_module,
-        ckpt_path=run_dir / f"{cfg.output_model_name}_weights.ckpt",
+        ckpt_path=actual_ckpt_path,
     )
 
     manager()

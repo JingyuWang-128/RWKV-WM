@@ -17,3 +17,10 @@ pwm/parawm_mujoco/wandb
 pwm/parawm_mujoco/ckpt
 pwm/modules/__pycache__
 pwm/parawm_mujoco/core/__pycache__
+pwm/parawm_mujoco/eval_result
+le-wm/.stable-wm
+le-wm/outputs
+le-wm/wandb
+le-wm/wandb_resume.json
+le-wm/__pycache__
+stable-worldmodel

@@ -19,6 +19,7 @@ trainer:
   accelerator: gpu
   precision: bf16
   gradient_clip_val: 1.0
+  strategy: ddp_find_unused_parameters_true  # Required for RWKV due to unused params in some code paths
 
 loader:
   batch_size: 128
@@ -35,9 +36,9 @@ optimizer:
 wandb:
   enabled: True
   config:
-    entity: lewm
+    entity: 2797128797-university-of-electronic-science-and-technolo
     project: lewm
-    name: ${output_model_name}
+    name: ${output_model_name}_rwkv
     id: ${subdir}
     resume: allow
     log_model: False
@@ -49,6 +50,7 @@ wm:
   embed_dim: 192
 
 predictor:
+  type: rwkv # Options: "transformer" or "rwkv"
   depth: 6
   heads: 16
   mlp_dim: 2048

@@ -115,6 +115,8 @@ if __name__ == "__main__":
     parser.add_argument("-obs_type", type=str, required=True)
     parser.add_argument("-env_name", type=str, required=True)
     parser.add_argument("-device", type=str, required=True)
+    parser.add_argument("-model_type", type=str, default="pwm", choices=["pwm", "jepa"])
+    parser.add_argument("--use_ema_target", action="store_true")
     args = parser.parse_args()
     conf = load_config(args.config_path)
     print(colorama.Fore.RED + str(args) + colorama.Style.RESET_ALL)
@@ -133,47 +135,46 @@ if __name__ == "__main__":
         NotImplementedError
     action_dim = dummy_env.action_space.shape[0]
     act = getattr(nn, conf.Models.Act)
-    world_model = train.build_world_model(conf, args.obs_type, dummy_env, action_dim, act, args.device)
-    agent = train.build_agent(conf, action_dim, act, args.device)
+
+    if args.model_type == "jepa":
+        print(colorama.Fore.CYAN + "Evaluating JEPA-RWKV World Model" + colorama.Style.RESET_ALL)
+        world_model = train.build_jepa_world_model(
+            conf, args.obs_type, dummy_env, action_dim, act, args.device, args.use_ema_target)
+        agent = train.build_agent(conf, action_dim, act, args.device, feat_dim=world_model.feat_dim)
+    else:
+        print(colorama.Fore.CYAN + "Evaluating original PWM World Model" + colorama.Style.RESET_ALL)
+        world_model = train.build_world_model(conf, args.obs_type, dummy_env, action_dim, act, args.device)
+        agent = train.build_agent(conf, action_dim, act, args.device)
+        
     root_path = f"ckpt/{args.n}"
 
-    # print model params
+    # print model params (为了兼容 JEPA，我们做一点调整防报错)
     model_param = sum(p.numel() for p in world_model.parameters())
     agent_param = sum(p.numel() for p in agent.parameters())
     enc_param = sum(p.numel() for p in world_model.encoder.parameters())
-    dec_param = sum(p.numel() for p in world_model.decoder.parameters())
-    dyn_param = sum(p.numel() for p in world_model.dynamic.parameters())
-    rnn_param = sum(p.numel() for p in world_model.dynamic.rnn_layer.parameters())
-    head_param = sum(p.numel() for p in world_model.done_head.parameters())
-    head_param += sum(p.numel() for p in world_model.reward_head.parameters())
-    act_param = sum(p.numel() for p in agent.actor.parameters())
-    val_param = sum(p.numel() for p in agent.critic.parameters())
-
+    
     print("--"*20)
     print(f"Name: Model; Params: {(model_param / 1e6):.3f} M")
     print(f"Name: Agent; Params: {(agent_param / 1e6):.3f} M")
     print(f"Name: Encoder; Params: {(enc_param / 1e6):.3f} M")
-    print(f"Name: Decoder; Params: {(dec_param / 1e6):.3f} M")
-    print(f"Name: Dynamic; Params: {(dyn_param / 1e6):.3f} M")
-    print(f"Name: RNN; Params: {(rnn_param / 1e6):.3f} M")
-    print(f"Name: Reward & Done Head; Params: {(head_param / 1e6):.3f} M")
-    print(f"Name: Actor; Params: {(act_param / 1e6):.3f} M")
-    print(f"Name: Critic; Params: {(val_param / 1e6):.3f} M")
     print("--"*20)
 
     import glob
     pathes = glob.glob(f"{root_path}/world_model_*.pth")
     steps = [int(path.split("_")[-1].split(".")[0]) for path in pathes]
     steps.sort()
-    print(steps)
+    print("Found checkpoints at steps:", steps)
     results = []
+    
     for step in tqdm(steps):
-        world_model.load_state_dict(torch.load(f"{root_path}/world_model_{step}.pth"))
-        agent.load_state_dict(torch.load(f"{root_path}/agent_{step}.pth"))
-        # # eval
+        # 严格加载权重
+        world_model.load_state_dict(torch.load(f"{root_path}/world_model_{step}.pth", map_location=args.device))
+        agent.load_state_dict(torch.load(f"{root_path}/agent_{step}.pth", map_location=args.device))
+        
+        # eval
         episode_returns = eval_episodes(
             obs_type=args.obs_type,
-            num_episode=50,
+            num_episode=50,  # 默认评估50个episode，你可以根据时间调整
             env_name=args.env_name,
             num_envs=10,
             frame_skip=conf.BasicSettings.FrameSkip, 
@@ -193,3 +194,4 @@ if __name__ == "__main__":
             for res in result:
                 line += f"{res},"
             fout.write(line[:-1] + "\n")
+    print(colorama.Fore.GREEN + f"Evaluation finished. Results saved to eval_result/{args.n}.csv" + colorama.Style.RESET_ALL)
