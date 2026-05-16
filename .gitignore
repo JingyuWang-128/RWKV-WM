@@ -24,3 +24,4 @@ le-wm/wandb
 le-wm/wandb_resume.json
 le-wm/__pycache__
 stable-worldmodel
+le-wm/IMPLEMENTATION_PLAN.md

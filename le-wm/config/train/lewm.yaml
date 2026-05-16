@@ -58,6 +58,12 @@ predictor:
   dropout: 0.1
   emb_dropout: 0.0
 
+  # ========== 辛修正器配置 ==========
+  use_symplectic_refiner: false      # 启用辛修正器
+  symplectic_n_layers: 3            # LA+G 层对数
+  symplectic_hidden_dim: 768        # 隐层维度（可选，默认=embed_dim）
+  symplectic_num_basis: 8           # 基函数个数
+
 loss:
   sigreg:
     weight: 0.09

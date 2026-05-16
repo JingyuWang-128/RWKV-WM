@@ -130,12 +130,25 @@ def run(cfg):
         norm_fn=torch.nn.BatchNorm1d,
     )
 
+    # ========== 准备辛修正器配置 ==========
+    symplectic_config = None
+    if cfg.predictor.get("use_symplectic_refiner", False):
+        symplectic_config = {
+            'embed_dim': embed_dim,
+            'n_layers': cfg.predictor.get("symplectic_n_layers", 3),
+            'hidden_dim': cfg.predictor.get("symplectic_hidden_dim", None),
+            'num_basis': cfg.predictor.get("symplectic_num_basis", 8),
+        }
+        print(f"[INFO] Symplectic Refiner config: {symplectic_config}")
+
     world_model = JEPA(
         encoder=encoder,
         predictor=predictor,
         action_encoder=action_encoder,
         projector=projector,
         pred_proj=predictor_proj,
+        use_symplectic_refiner=cfg.predictor.get("use_symplectic_refiner", False),
+        symplectic_config=symplectic_config,
     )
 
     optimizers = {

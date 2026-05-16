@@ -4,6 +4,7 @@ import torch
 import torch.nn.functional as F
 from einops import rearrange
 from torch import nn
+from symplectic_refiner import SymplecticRefiner
 
 def detach_clone(v):
     return v.detach().clone() if torch.is_tensor(v) else v
@@ -17,6 +18,8 @@ class JEPA(nn.Module):
         action_encoder,
         projector=None,
         pred_proj=None,
+        use_symplectic_refiner=False,
+        symplectic_config=None,
     ):
         super().__init__()
 
@@ -25,6 +28,27 @@ class JEPA(nn.Module):
         self.action_encoder = action_encoder
         self.projector = projector or nn.Identity()
         self.pred_proj = pred_proj or nn.Identity()
+
+        # ========== 辛修正器集成 ==========
+        self.use_symplectic_refiner = use_symplectic_refiner
+        if use_symplectic_refiner:
+            config = symplectic_config or {}
+            embed_dim = config.get('embed_dim', 768)
+            n_layers = config.get('n_layers', 3)
+            hidden_dim = config.get('hidden_dim', None)
+            num_basis = config.get('num_basis', 8)
+
+            self.symplectic_refiner = SymplecticRefiner(
+                embed_dim=embed_dim,
+                n_layers=n_layers,
+                hidden_dim=hidden_dim,
+                num_basis=num_basis
+            )
+            print(f"[INFO] SymplecticRefiner enabled: "
+                  f"embed_dim={embed_dim}, n_layers={n_layers}, "
+                  f"n_params={sum(p.numel() for p in self.symplectic_refiner.parameters()):,}")
+        else:
+            self.symplectic_refiner = None
 
     def encode(self, info):
         """Encode observations and actions into embeddings.
@@ -50,6 +74,19 @@ class JEPA(nn.Module):
         act_emb: (B, T, A_emb)
         """
         preds = self.predictor(emb, act_emb)
+
+        # ========== 新增：应用辛修正 ==========
+        if self.use_symplectic_refiner and self.symplectic_refiner is not None:
+            # 将 (B, T, D) 转为 (B*T, D) 进行修正
+            B, T, D = preds.shape
+            preds_flat = preds.reshape(B * T, D)
+
+            # 应用辛修正器
+            preds_refined = self.symplectic_refiner(preds_flat)
+
+            # 恢复形状
+            preds = preds_refined.reshape(B, T, D)
+
         preds = self.pred_proj(rearrange(preds, "b t d -> (b t) d"))
         preds = rearrange(preds, "(b t) d -> b t d", b=emb.size(0))
         return preds
