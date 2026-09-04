@@ -1,0 +1,48 @@
+method:
+  name: craft_wm
+  description: conformal reachability advantage for temporal abstraction
+
+reachability:
+  family: continuous_lognormal
+  horizon_bins: [5, 10, 20, 40, 80, 100]
+  min_log_scale: -3.0
+  max_log_scale: 1.0
+  mean_weight: 1.0
+  label_scale: 100.0
+  hidden_dim: 256
+  depth: 3
+  batch_size: 1024
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  epochs: 30
+  patience: 5
+  # Cross-trajectory pairs have unknown reachability and are not false-labelled
+  # as unreachable. This weight activates only for explicitly labelled negatives.
+  negative_weight: 0.5
+  semigroup_weight: 0.05
+  seed: 6144
+
+calibration:
+  alpha: 0.1
+  scale_mode: constant
+  # The reachability module learns CDFs through 100 steps. Online imagination
+  # uses only the 5/10-step scales whose realized progress stayed correlated
+  # with prediction; long-range guidance comes from the temporal metric rather
+  # than an unreliable long world-model rollout.
+  durations: [5, 10]
+
+planner:
+  action_block: 5
+  # The short shared path leaves enough budget for candidate diversity while
+  # remaining within 1.25x Flat+TRM's measured transition count.
+  samples: 300
+  elites: 30
+  iterations: 30
+  variance_scale: 1.0
+
+constraints:
+  position_labels: false
+  topology_artifact: false
+  trusted_candidates: false
+  flat_anchor: false
+  alternate_fallback_controller: false

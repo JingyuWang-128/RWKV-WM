@@ -1,0 +1,77 @@
+protocol:
+  schema_version: cc_rwkv_m0_v1
+  split_seed: 3072
+  training_seeds: [0, 1, 2]
+  primitive_horizons: [5, 10, 20, 50, 100]
+  action_block: 5
+  observation_stride: 5
+  history_frames: 1
+  open_loop_samples: 300
+  reference_action: [0.0, 0.0]
+
+model:
+  latent_dim: 192
+  depth: 6
+  model_dim: 192
+  matrix_heads: 6
+  head_dim: 32
+  channel_mlp_dim: 768
+  matrix_state_dtype: float32
+  m3:
+    action_hidden_dim: 64
+    action_entry: matrix_update_only
+    decay_map: official_compatible_log_hazard_double_exp
+    decay_ablation: official_logit_residual
+    intervention_gate_initial: 0.1
+    action_delta_head_initial: zero
+    action_log_hazard_residual_clamp: [-8.0, 5.0]
+    b4_centered: false
+    b6_centered: true
+    parameter_matched_channel_mlp_dim: 3728
+    parameter_matched_count: 10783296
+    b0_reference_count: 10791360
+
+training_m4:
+  methods: [b2, b3, b4, b6]
+  loss:
+    prediction: 1.0
+    effect: 1.0
+    direction: 0.1
+    magnitude: 0.1
+    world: 0.5
+    gate: 0.001
+    sigreg: 0.0
+    sigreg_stage_d: 0.09
+  effect_weight_search: [0.5, 1.0, 2.0]
+  effect_mask_train_quantile: 0.1
+  curriculum_model_steps: [1, 2, 4, 10, 20]
+  minimum_steps_per_horizon: 5000
+  short_horizon_replay_fraction: 0.25
+  plateau_evaluations: 3
+  plateau_relative_improvement: 0.005
+  stage_b_world_freeze_steps: 1000
+  optimizer:
+    name: AdamW
+    learning_rate: 5.0e-5
+    weight_decay: 1.0e-3
+    warmup_steps: 2000
+    scheduler: cosine
+    batch_size: 128
+    gradient_clip: 1.0
+  b3_dwm:
+    implementation_status: paper_spec_reimplementation
+    source: arXiv:2607.18715
+    world_head_hidden_dim: 2048
+    temperature: 0.07
+    world_contrastive_weight: 0.3
+    orthogonality_weight: 0.5
+
+evaluation:
+  encoder_batch_size: 128
+  rollout_batch_size: 64
+  metrics: [latent_mse, latent_l2, cosine_distance]
+  no_intermediate_observations: true
+  controller: none
+
+paths:
+  output_root: artifacts/results/cc_rwkv

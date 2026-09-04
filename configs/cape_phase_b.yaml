@@ -1,0 +1,57 @@
+experiment:
+  name: cape_phase_b
+  seeds: [0, 1, 2]
+  goal_offsets: [25, 50, 75, 100]
+  episodes_per_condition: 100
+  environments: [two_room, pusht]
+
+planner:
+  durations: [5, 10, 20, 40]
+  alpha: 0.1
+  executability_threshold: 0.15
+  goal_threshold: 0.05
+  subgoal_threshold: 0.05
+  lambda_compute_grid: [0.0, 0.01, 0.05, 0.1]
+  lambda_risk_grid: [0.0, 0.01, 0.05, 0.1]
+  compute_cost_scale: 0.00001
+  stall_patience: 2
+  successes_to_expand: 2
+  adaptive_duration: true
+  risk_filter_enabled: true
+  tube_trigger_enabled: true
+  stall_trigger_enabled: true
+  subgoal_trigger_enabled: true
+  remaining_risk_trigger_enabled: true
+  minimum_success_probability: 0.0
+  physical_horizon: 100
+  low_level_horizon: 10
+  model_transition_budget_per_decision: 56000
+  high_level_budget_fraction: 0.6
+  fallback_budget_fraction: 0.1
+
+cem:
+  low_level:
+    samples: 256
+    elites: 32
+    iterations: 4
+  macro:
+    samples: 128
+    elites: 16
+    iterations: 4
+
+models:
+  macro_dim: 32
+  macro_hidden_dim: 512
+  risk_hidden_dim: 512
+  trm_hidden_dim: 256
+  freeze_backbone: true
+  trm_weight: 0.9
+  normalized_latent_l2_weight: 0.1
+
+statistics:
+  paired_bootstrap_resamples: 10000
+  confidence: 0.95
+  phase_gate:
+    minimum_long_horizon_gain: 0.10
+    maximum_planning_overhead: 0.25
+    maximum_short_horizon_regression: 0.03

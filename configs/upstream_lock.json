@@ -1,0 +1,12 @@
+{
+  "resolved_at": "2026-08-20",
+  "leworldmodel": {
+    "url": "https://github.com/hongqin/leworldmodel.git",
+    "commit": "bf04d3e8c3752ac24f3692fbc5f4cf50209fa765"
+  },
+  "stable_worldmodel": {
+    "url": "https://github.com/galilai-group/stable-worldmodel.git",
+    "commit": "addbab40377da680dadbfbc90250fe749f6f57e3",
+    "pypi_version": "0.1.1"
+  }
+}

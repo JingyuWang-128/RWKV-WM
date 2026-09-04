@@ -1,0 +1,19 @@
+base_config: cape_phase_b.yaml
+
+experiment:
+  name: cape_phase_c
+  seeds: [0, 1, 2]
+  goal_offsets: [25, 50, 75, 100]
+  episodes_per_condition: 100
+  environments: [two_room, pusht, ogbench_cube]
+  backbones: [lewm, dino_wm]
+  shifts: [none, visual, occlusion, friction, mass]
+
+ablations:
+  temporal_policy: [fixed, adaptive]
+  calibration: [none, probability, sequence_conformal]
+  risk_filter: [false, true]
+  event_trigger: [false, true]
+  cross_scale_consistency: [false, true]
+  goal_metric: [latent_l2, trm, hybrid]
+  alpha: [0.05, 0.1, 0.2]

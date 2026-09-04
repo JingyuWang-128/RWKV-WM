@@ -1,0 +1,61 @@
+protocol:
+  reproduction_level: paper_spec_tworoom_adaptation
+  split_seed: 3072
+  train_fraction: 0.8
+  offsets: [25, 50, 75, 100]
+  evaluation_seeds: [0, 1, 2]
+  tasks_per_condition: 100
+  evaluation_budget: 50
+  action_block: 5
+
+data:
+  trm_train_pairs: 100000
+  trm_validation_pairs: 10000
+  dynamics_train_segments: 100000
+  dynamics_validation_segments: 10000
+  durations: [5, 10, 20, 40]
+
+trm:
+  hidden_dim: 256
+  label_scale: 224.0
+  batch_size: 1024
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  epochs: 30
+  patience: 5
+  hybrid_trm_weight: 0.9
+  hybrid_l2_weight: 0.1
+
+macro:
+  macro_dim: 32
+  max_duration: 40
+  batch_size: 128
+  learning_rate: 0.00005
+  weight_decay: 0.001
+  epochs: 20
+  patience: 5
+  fixed_duration: 20
+  high_level_horizon: 2
+  empirical_bank_size: 10000
+  empirical_residual_scale: 0.25
+  cem_samples: 128
+  cem_iterations: 10
+  cem_elites: 16
+
+vlwm:
+  max_horizon_blocks: 5
+  model_dim: 192
+  depth: 6
+  heads: 12
+  mlp_dim: 768
+  batch_size: 128
+  learning_rate: 0.00005
+  weight_decay: 0.001
+  epochs: 10
+  patience: 3
+  schedules:
+    "25": [3, 1, 1]
+    "50": [3, 1, 1]
+    "75": [4, 1]
+    "100": [4, 1]
+

@@ -1,0 +1,18 @@
+base_config: base.yaml
+
+experiment:
+  name: cc_rwkv_m0_tworoom
+  environment: swm/TwoRoom-v1
+  task_kind: deterministic_navigation
+
+assets:
+  data: /data/wjy/lewm_data/tworoom.h5
+  weights: /data/wjy/lewm_model/tworooms/weights.pt
+  model_config: /data/wjy/lewm_model/tworooms/config.json
+  frozen_test_episodes: artifacts/results/lewm_tworooms_long_matrix_gpu_final/matrix_episodes.jsonl
+
+paths:
+  output_root: artifacts/results/cc_rwkv/tworoom/m0
+  manifest_dir: artifacts/results/cc_rwkv/tworoom/m0/protocol
+  b0_output_dir: artifacts/results/cc_rwkv/tworoom/m0/b0_open_loop
+

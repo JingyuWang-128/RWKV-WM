@@ -1,0 +1,25 @@
+experiment:
+  name: lewm_tworooms_official
+  environment: swm/TwoRoom-v1
+  selection_seed: 42
+  num_eval: 50
+  goal_offset: 25
+  eval_budget: 50
+  image_size: 224
+  success_threshold: 16.0
+  save_video: false
+
+planner:
+  horizon: 5
+  receding_horizon: 5
+  action_block: 5
+  history_len: 1
+  warm_start: true
+
+cem:
+  batch_size: 1
+  num_samples: 300
+  variance_scale: 1.0
+  iterations: 30
+  topk: 30
+

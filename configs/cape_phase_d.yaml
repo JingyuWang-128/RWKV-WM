@@ -1,0 +1,14 @@
+experiment:
+  name: cape_phase_d_online_rl
+  seeds: [0, 1, 2]
+  environments: [memory_maze, popgym]
+  baselines: [dreamerv3, r2i, fixed_imagination]
+
+imagination:
+  lengths: [5, 15, 30]
+  risk_signal: ensemble_disagreement
+  truncate_on_violation: true
+
+phase_gate:
+  require_phase_b_pass: true
+  report_separately_from_visual_control: true

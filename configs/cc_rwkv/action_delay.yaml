@@ -1,0 +1,27 @@
+base_config: base.yaml
+
+experiment:
+  name: cc_rwkv_m5_action_delay
+  environment: swm/TwoRoom-v1+ActionDelay5
+  task_kind: deterministic_delayed_navigation
+
+assets:
+  data: /data/wjy/lewm_data/tworoom.h5
+  weights: /data/wjy/lewm_model/tworooms/weights.pt
+  model_config: /data/wjy/lewm_model/tworooms/config.json
+  frozen_test_episodes: artifacts/results/lewm_tworooms_long_matrix_gpu_final/matrix_episodes.jsonl
+
+protocol:
+  variant: action_delay
+  fifo_delay_primitive_steps: 5
+  action_block: 1
+  observation_stride: 1
+  m5_primitive_horizons: [1, 5, 10, 20]
+  training_seeds: [0, 1, 2]
+  effect_weight_search: [0.5, 1.0, 2.0]
+  bootstrap_seed: 3072
+  bootstrap_samples: 10000
+
+paths:
+  dataset: artifacts/cache/cc_rwkv/action_delay/mvp5000/branches.h5
+  output_root: artifacts/results/cc_rwkv/m5/action_delay

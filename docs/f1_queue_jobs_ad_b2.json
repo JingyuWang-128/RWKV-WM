@@ -1,0 +1,5 @@
+[
+  {"data":"artifacts/cache/cc_rwkv/per_step_pairs/action_delay/mvp20000_merged_fast/pairs.h5","output":"artifacts/runs/per_step_pairs/formal/f1/action_delay/b2_seed0","method":"b2","seed":0,"max_steps":40000,"curriculum":"1,5,10,20"},
+  {"data":"artifacts/cache/cc_rwkv/per_step_pairs/action_delay/mvp20000_merged_fast/pairs.h5","output":"artifacts/runs/per_step_pairs/formal/f1/action_delay/b2_seed1","method":"b2","seed":1,"max_steps":40000,"curriculum":"1,5,10,20"},
+  {"data":"artifacts/cache/cc_rwkv/per_step_pairs/action_delay/mvp20000_merged_fast/pairs.h5","output":"artifacts/runs/per_step_pairs/formal/f1/action_delay/b2_seed2","method":"b2","seed":2,"max_steps":40000,"curriculum":"1,5,10,20"}
+]

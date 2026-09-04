@@ -1,0 +1,5 @@
+[
+  {"data":"artifacts/cache/cc_rwkv/per_step_pairs/tworoom_w/mvp20000_merged/pairs.h5","output":"artifacts/runs/per_step_pairs/formal/f1/tworoom_w/b3_seed0","method":"b3","seed":0,"max_steps":30000,"curriculum":"1,2,4"},
+  {"data":"artifacts/cache/cc_rwkv/per_step_pairs/tworoom_w/mvp20000_merged/pairs.h5","output":"artifacts/runs/per_step_pairs/formal/f1/tworoom_w/b3_seed1","method":"b3","seed":1,"max_steps":30000,"curriculum":"1,2,4"},
+  {"data":"artifacts/cache/cc_rwkv/per_step_pairs/tworoom_w/mvp20000_merged/pairs.h5","output":"artifacts/runs/per_step_pairs/formal/f1/tworoom_w/b3_seed2","method":"b3","seed":2,"max_steps":30000,"curriculum":"1,2,4"}
+]
