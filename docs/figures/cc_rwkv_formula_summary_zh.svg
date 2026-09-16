@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="2148" height="1170" viewBox="0 0 1432 780" role="img" aria-labelledby="title desc">
+  <title id="title">CC-RWKV decay、erase 与 write 公式总结</title>
+  <desc id="desc">白底中文论文公式图，总结动作参数中心化以及 decay、erase、write 对 RWKV 状态矩阵的更新。</desc>
+
+  <defs>
+    <marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L9,4.5 L0,9 z" fill="#34424F"/>
+    </marker>
+    <style>
+      .title { font-family:'Noto Sans CJK SC','Droid Sans Fallback',sans-serif; font-size:28px; font-weight:700; fill:#26333F; }
+      .section { font-family:'Noto Sans CJK SC','Droid Sans Fallback',sans-serif; font-size:21px; font-weight:700; fill:#26333F; }
+      .label { font-family:'Noto Sans CJK SC','Droid Sans Fallback',sans-serif; font-size:16px; font-weight:600; fill:#536170; }
+      .note { font-family:'Noto Sans CJK SC','Droid Sans Fallback',sans-serif; font-size:15px; font-weight:400; fill:#667585; }
+      .math { font-family:'DejaVu Serif','FreeSerif',serif; font-size:21px; font-style:italic; fill:#1F2933; }
+      .mathLarge { font-family:'DejaVu Serif','FreeSerif',serif; font-size:23px; font-style:italic; fill:#1F2933; }
+      .panel { fill:#FFFFFF; stroke:#AAB4BF; stroke-width:1.8; }
+      .centerPanel { fill:#FFF9E8; stroke:#B07D00; stroke-width:2; }
+      .decayPanel { fill:#F4FAFD; stroke:#0072B2; stroke-width:2; }
+      .erasePanel { fill:#FBF7FC; stroke:#8A4F8F; stroke-width:2; }
+      .writePanel { fill:#F4FBF8; stroke:#009E73; stroke-width:2; }
+      .summaryPanel { fill:#FAFBFC; stroke:#34424F; stroke-width:2.2; }
+      .chipActual { fill:#FBE9DF; stroke:#D55E00; stroke-width:1.8; }
+      .chipZero { fill:#F4F6F8; stroke:#667585; stroke-width:1.8; stroke-dasharray:7 4; }
+      .chipText { font-family:'Noto Sans CJK SC','Droid Sans Fallback',sans-serif; font-size:17px; font-weight:600; fill:#26333F; }
+      .line { fill:none; stroke:#34424F; stroke-width:2; marker-end:url(#arrow); }
+      .divider { stroke:#D8DEE5; stroke-width:1.3; }
+    </style>
+  </defs>
+
+  <rect width="1432" height="780" fill="#FFFFFF"/>
+  <text class="title" x="716" y="43" text-anchor="middle">CC-RWKV 的 Decay / Erase / Write 更新公式</text>
+
+  <!-- Counterfactual centering -->
+  <rect class="centerPanel" x="50" y="70" width="1332" height="150" rx="11"/>
+  <text class="section" x="76" y="103">① 动作参数中心化</text>
+
+  <rect class="chipActual" x="89" y="112" width="220" height="46" rx="8"/>
+  <text class="chipText" x="199" y="141" text-anchor="middle">实际动作 uₜ</text>
+  <rect class="chipZero" x="89" y="169" width="220" height="46" rx="8"/>
+  <text class="chipText" x="199" y="198" text-anchor="middle">参考零动作 u⁰</text>
+  <path class="line" d="M309 135 H344 V143 H379"/>
+  <path class="line" d="M309 192 H344 V165 H379"/>
+
+  <rect class="panel" x="381" y="126" width="220" height="56" rx="8"/>
+  <text class="chipText" x="491" y="149" text-anchor="middle">共享动作参数网络</text>
+  <text class="note" x="491" y="172" text-anchor="middle">相同世界特征 xₜʷ</text>
+  <path class="line" d="M601 154 H630"/>
+
+  <text class="math" x="650" y="132">fₐ(xₜʷ, u) → (ηᵃ, αᵃ, vᵃ, gᵃ)</text>
+  <text class="math" x="650" y="169">(δηₜᵃ, δαₜᵃ, δvₜᵃ) = fₐ(xₜʷ,uₜ) − fₐ(xₜʷ,u⁰)</text>
+  <text class="math" x="650" y="204">ρₜ = σ(gₜᵃ(uₜ))</text>
+
+  <!-- Three operators -->
+  <rect class="decayPanel" x="50" y="248" width="414" height="329" rx="11"/>
+  <text class="section" x="76" y="283">② Decay：调节记忆保留</text>
+  <line class="divider" x1="76" y1="299" x2="438" y2="299"/>
+  <text class="label" x="76" y="329">自主世界衰减</text>
+  <text class="math" x="76" y="363">rₜʷ = c σ(ℓₜʷ),   c = 0.606531</text>
+  <text class="math" x="76" y="400">wₜʷ = exp(−rₜʷ)</text>
+  <text class="label" x="76" y="446">动作调制</text>
+  <text class="math" x="76" y="480">hₜᵃ = clip(ρₜ ⊙ δηₜᵃ, −8, 5)</text>
+  <text class="math" x="76" y="517">rₜᶜᶠ = rₜʷ ⊙ exp(hₜᵃ)</text>
+  <text class="mathLarge" x="76" y="557">wₜᶜᶠ = exp(−rₜᶜᶠ)</text>
+
+  <rect class="erasePanel" x="509" y="248" width="414" height="329" rx="11"/>
+  <text class="section" x="535" y="283">③ Erase/Edit：定向编辑</text>
+  <line class="divider" x1="535" y1="299" x2="897" y2="299"/>
+  <text class="label" x="535" y="329">原始 world erase</text>
+  <text class="math" x="535" y="366">ΔMᵂ₋ₑ = −(Mₜ k̄ₜ)(λₜ ⊙ k̄ₜ)ᵀ</text>
+  <text class="label" x="535" y="417">中心化动作编辑</text>
+  <text class="math" x="535" y="451">eₜᵃ = ρₜ ⊙ δαₜᵃ</text>
+  <text class="math" x="535" y="488">βₜᵃ = tanh(Wₑ xₜʷ)</text>
+  <text class="mathLarge" x="535" y="535">ΔMᵃ₋ₑ = (Mₜ eₜᵃ)(βₜᵃ)ᵀ</text>
+  <text class="note" x="535" y="559">有符号 rank-1 修正：可擦除、增强或重定向</text>
+
+  <rect class="writePanel" x="968" y="248" width="414" height="329" rx="11"/>
+  <text class="section" x="994" y="283">④ Write：写入动作效应</text>
+  <line class="divider" x1="994" y1="299" x2="1356" y2="299"/>
+  <text class="label" x="994" y="329">原始 world write</text>
+  <text class="math" x="994" y="366">ΔMᵂ₋𝓌 = vₜʷ (kₜʷ)ᵀ</text>
+  <text class="label" x="994" y="417">中心化动作写入</text>
+  <text class="math" x="994" y="451">vₜᵃ = ρₜ ⊙ δvₜᵃ</text>
+  <text class="math" x="994" y="488">kₜᵃ = tanh(W𝓌 xₜʷ)</text>
+  <text class="mathLarge" x="994" y="535">ΔMᵃ₋𝓌 = vₜᵃ (kₜᵃ)ᵀ</text>
+  <text class="note" x="994" y="559">rank-1 写入：记录实际动作相对零动作的效应</text>
+
+  <!-- Complete recurrence -->
+  <path class="line" d="M257 577 V611 H716 V628"/>
+  <path class="line" d="M716 577 V628"/>
+  <path class="line" d="M1175 577 V611 H716 V628"/>
+
+  <rect class="summaryPanel" x="106" y="630" width="1220" height="118" rx="11"/>
+  <text class="section" x="132" y="665">完整状态更新</text>
+  <text class="mathLarge" x="716" y="704" text-anchor="middle">Mₜ₊₁ = Mₜ Diag(wₜᶜᶠ) + ΔMᵂ₋ₑ + ΔMᵂ₋𝓌 + ΔMᵃ₋ₑ + ΔMᵃ₋𝓌</text>
+  <text class="note" x="716" y="733" text-anchor="middle">当 uₜ = u⁰ 时，三个中心化动作残差均为零，更新严格退化为原版 RWKV-7</text>
+</svg>

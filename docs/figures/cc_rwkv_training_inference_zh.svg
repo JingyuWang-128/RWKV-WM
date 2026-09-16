@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="2148" height="990" viewBox="0 0 1432 660" role="img" aria-labelledby="title desc">
+  <title id="title">CC-RWKV-WM 训练与推理流程</title>
+  <desc id="desc">中文双面板论文流程图，左侧展示逐位置配对训练，右侧展示单轨迹 free-running 推理。</desc>
+
+  <defs>
+    <marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L9,4.5 L0,9 z" fill="#26333F"/>
+    </marker>
+    <marker id="arrowOrange" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L9,4.5 L0,9 z" fill="#D55E00"/>
+    </marker>
+    <marker id="arrowBlue" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L9,4.5 L0,9 z" fill="#0072B2"/>
+    </marker>
+    <style>
+      .panel { fill:#FFFFFF; stroke:#AAB4BF; stroke-width:2; }
+      .head { fill:#26333F; }
+      .title { font-family:'Noto Sans CJK SC','Droid Sans Fallback',sans-serif; font-size:24px; font-weight:700; fill:#FFFFFF; }
+      .main { font-family:'Noto Sans CJK SC','Droid Sans Fallback',sans-serif; font-size:20px; font-weight:700; fill:#26333F; }
+      .text { font-family:'Noto Sans CJK SC','Droid Sans Fallback',sans-serif; font-size:18px; font-weight:400; fill:#34424F; }
+      .sub { font-family:'Noto Sans CJK SC','Droid Sans Fallback',sans-serif; font-size:16px; font-weight:400; fill:#536170; }
+      .tiny { font-family:'Noto Sans CJK SC','Droid Sans Fallback',sans-serif; font-size:15px; font-weight:400; fill:#536170; }
+      .neutral { fill:#F4F6F8; stroke:#667585; stroke-width:1.8; }
+      .history { fill:#FFF5D8; stroke:#B07D00; stroke-width:2; }
+      .factual { fill:#FBE9DF; stroke:#D55E00; stroke-width:2.2; }
+      .noop { fill:#E7F2F8; stroke:#0072B2; stroke-width:2.2; stroke-dasharray:8 5; }
+      .effect { fill:#E5F3EE; stroke:#009E73; stroke-width:2.2; }
+      .loss { fill:#F2EAF3; stroke:#8A4F8F; stroke-width:2; }
+      .note { fill:#FFFFFF; stroke:#8B97A3; stroke-width:1.6; stroke-dasharray:5 4; }
+      .loop { fill:#FAFBFC; stroke:#AAB4BF; stroke-width:1.8; stroke-dasharray:6 4; }
+      .line { fill:none; stroke:#26333F; stroke-width:2.2; marker-end:url(#arrow); }
+      .orange { fill:none; stroke:#D55E00; stroke-width:2.4; marker-end:url(#arrowOrange); }
+      .blue { fill:none; stroke:#0072B2; stroke-width:2.4; stroke-dasharray:8 5; marker-end:url(#arrowBlue); }
+      .feedback { fill:none; stroke:#26333F; stroke-width:2; stroke-dasharray:6 4; marker-end:url(#arrow); }
+    </style>
+  </defs>
+
+  <rect width="1432" height="660" fill="#FFFFFF"/>
+
+  <!-- Training panel -->
+  <rect class="panel" x="18" y="18" width="690" height="624" rx="8"/>
+  <path class="head" d="M26 18 H700 Q708 18 708 26 V68 H18 V26 Q18 18 26 18 Z"/>
+  <text class="title" x="40" y="52">(a) 训练：逐位置配对反事实监督</text>
+
+  <rect class="history" x="67" y="93" width="592" height="66" rx="9"/>
+  <text class="main" x="363" y="120" text-anchor="middle">真实历史与配对监督目标</text>
+  <text class="sub" x="363" y="146" text-anchor="middle">历史 latent/action；事实、零动作与效应 target</text>
+  <path class="line" d="M363 159 V190"/>
+
+  <rect class="neutral" x="114" y="192" width="498" height="64" rx="9"/>
+  <text class="main" x="363" y="219" text-anchor="middle">初始化 RWKV 状态并沿事实轨迹递推</text>
+  <text class="sub" x="363" y="244" text-anchor="middle">得到每个位置的 (Mₜ, zₜ)；zₜ 可为上一步预测</text>
+  <path class="line" d="M363 256 V285"/>
+
+  <rect class="loop" x="44" y="287" width="638" height="178" rx="10"/>
+  <text class="sub" x="62" y="312">对每个位置 t，从同一 (Mₜ, zₜ) 克隆：</text>
+
+  <path class="orange" d="M363 318 V338 H196 V354"/>
+  <path class="blue" d="M363 318 V338 H530 V354"/>
+
+  <rect class="factual" x="70" y="356" width="252" height="76" rx="9"/>
+  <text class="main" x="196" y="385" text-anchor="middle">事实分支</text>
+  <text class="text" x="196" y="414" text-anchor="middle">[uₜ, uₜ₊₁, …]</text>
+
+  <rect class="noop" x="404" y="356" width="252" height="76" rx="9"/>
+  <text class="main" x="530" y="385" text-anchor="middle">脉冲零动作分支</text>
+  <text class="text" x="530" y="414" text-anchor="middle">[0, uₜ₊₁, …]</text>
+
+  <text class="tiny" x="363" y="454" text-anchor="middle">两个分支均 free-running；仅事实状态继续用于位置 t+1</text>
+  <path class="orange" d="M196 432 V484 H282 V500"/>
+  <path class="blue" d="M530 432 V484 H444 V500"/>
+
+  <rect class="loss" x="68" y="502" width="590" height="79" rx="10"/>
+  <text class="main" x="363" y="530" text-anchor="middle">位置平衡的总损失</text>
+  <text class="text" x="363" y="558" text-anchor="middle">L事实 + L零动作 + λ效应(L效应 + 方向 + 幅值)</text>
+  <path class="line" d="M363 581 V610"/>
+  <text class="main" x="363" y="630" text-anchor="middle">反向传播并更新模型参数</text>
+
+  <!-- Inference panel -->
+  <rect class="panel" x="726" y="18" width="688" height="624" rx="8"/>
+  <path class="head" d="M734 18 H1406 Q1414 18 1414 26 V68 H726 V26 Q726 18 734 18 Z"/>
+  <text class="title" x="748" y="52">(b) 推理：单轨迹 free-running imagination</text>
+
+  <rect class="history" x="813" y="93" width="514" height="65" rx="9"/>
+  <text class="main" x="1070" y="120" text-anchor="middle">真实历史 → 初始状态 (M₀, z₀)</text>
+  <text class="sub" x="1070" y="145" text-anchor="middle">给定未来动作序列 u₀:H−1</text>
+  <path class="line" d="M1070 158 V190"/>
+
+  <rect class="loop" x="758" y="192" width="624" height="326" rx="11"/>
+  <text class="main" x="786" y="222">对每个未来步 t：</text>
+
+  <rect class="neutral" x="792" y="242" width="178" height="62" rx="8"/>
+  <text class="main" x="881" y="279" text-anchor="middle">当前 zₜ，Mₜ</text>
+  <rect class="factual" x="1003" y="242" width="156" height="62" rx="8"/>
+  <text class="main" x="1081" y="279" text-anchor="middle">实际动作 uₜ</text>
+  <rect class="noop" x="1192" y="242" width="156" height="62" rx="8"/>
+  <text class="main" x="1270" y="279" text-anchor="middle">参考动作 0</text>
+
+  <path class="line" d="M881 304 V345 H945 V363"/>
+  <path class="orange" d="M1081 304 V336 H1053 V363"/>
+  <path class="blue" d="M1270 304 V336 H1161 V363"/>
+
+  <rect class="effect" x="824" y="365" width="492" height="83" rx="10"/>
+  <text class="main" x="1070" y="394" text-anchor="middle">反事实中心化矩阵递推</text>
+  <text class="text" x="1070" y="422" text-anchor="middle">世界更新 + [fₐ(uₜ) − fₐ(0)] → Mₜ₊₁, ẑₜ₊₁</text>
+  <text class="sub" x="1070" y="444" text-anchor="middle">零动作仅作为内部参考，不直接进入输出头</text>
+
+  <path class="line" d="M1070 448 V476"/>
+  <rect class="neutral" x="866" y="478" width="408" height="58" rx="8"/>
+  <text class="main" x="1070" y="503" text-anchor="middle">将 ẑₜ₊₁、Mₜ₊₁ 用于下一步</text>
+  <text class="sub" x="1070" y="526" text-anchor="middle">不读取真实 zₜ₊₁</text>
+
+  <path class="feedback" d="M1274 507 H1362 V224 H1344"/>
+  <path class="line" d="M1070 536 V566"/>
+
+  <rect class="neutral" x="813" y="568" width="514" height="55" rx="9"/>
+  <text class="main" x="1070" y="593" text-anchor="middle">输出预测轨迹 ẑ₁:H</text>
+  <text class="sub" x="1070" y="615" text-anchor="middle">标准推理无需额外 rollout 一条 pulse-noop 轨迹</text>
+
+  <path class="line" d="M708 330 H726"/>
+</svg>

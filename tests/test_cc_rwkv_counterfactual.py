@@ -4,7 +4,9 @@ import torch
 from cape_wm.cc_rwkv.cell import (
     CC_DECAY_LOG_HAZARD,
     CC_DECAY_OFFICIAL_LOGIT,
+    RWKV7_ACTION_UPDATE_OPERATOR_BOUND,
     RWKV7_DECAY_SCALE,
+    bounded_action_residual,
     counterfactual_rwkv7_decay,
     counterfactual_rwkv7_matrix_step,
 )
@@ -119,6 +121,21 @@ def test_rank_two_decomposition_matches_explicit_transition_matrix():
     torch.testing.assert_close(actual, expected_world + expected_action, atol=1e-6, rtol=1e-5)
 
 
+def test_bounded_action_residual_limits_worst_case_outer_product_norm():
+    batch, heads, width = 2, 3, 4
+    raw = torch.full((batch, heads * width), 1e6)
+    gate = torch.ones_like(raw)
+    residual = bounded_action_residual(raw, gate, num_heads=heads)
+    worst_case_key = torch.ones_like(residual)
+    transition = residual.unsqueeze(-1) * worst_case_key.unsqueeze(-2)
+    operator_norm = torch.linalg.matrix_norm(transition, ord=2)
+    assert torch.all(operator_norm <= RWKV7_ACTION_UPDATE_OPERATOR_BOUND + 1e-6)
+    assert torch.isfinite(residual).all()
+
+    zero = bounded_action_residual(torch.zeros_like(raw), gate, num_heads=heads)
+    assert torch.count_nonzero(zero) == 0
+
+
 def test_centered_zero_delta_is_exact_official_rwkv7_reduction():
     torch.manual_seed(103)
     vanilla = VanillaRWKV7WorldPredictor(
@@ -204,7 +221,9 @@ def test_raw_action_has_no_prediction_bypass_but_can_act_through_matrix_update()
     factual, factual_state, _ = model.step(latent, first, model.init_state(2), reference)
     noop, noop_state, _ = model.step(latent, reference, model.init_state(2), reference)
     assert not torch.allclose(factual_state.matrix, noop_state.matrix)
-    assert not torch.allclose(factual, noop)
+    # The bounded rank-two update is intentionally small at initialization,
+    # but the action path must remain strictly active at the prediction head.
+    assert torch.count_nonzero(factual - noop) > 0
 
 
 def test_reference_subtraction_uses_shared_weights_and_has_finite_gradients():

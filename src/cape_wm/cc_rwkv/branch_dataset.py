@@ -81,11 +81,14 @@ def sample_snapshot_specs(
     allow_multiple_per_episode: bool = False,
     shard_index: int = 0,
     num_shards: int = 1,
+    sample_prefix: str = "tworoom",
 ) -> list[SnapshotSpec]:
     if count <= 0 or history_steps <= 0 or future_steps <= 0 or action_block <= 0:
         raise ValueError("sampling counts and horizons must be positive")
     if num_shards <= 0 or not 0 <= shard_index < num_shards:
         raise ValueError("shard_index must be in [0, num_shards)")
+    if not sample_prefix or ":" in sample_prefix:
+        raise ValueError("sample_prefix must be a non-empty colon-free string")
     lookup = {int(episode): index for index, episode in enumerate(all_episode_ids)}
     proportions = {"train": 0.8, "validation": 0.1, "test": 0.1}
     counts = {name: int(np.floor(count * value)) for name, value in proportions.items()}
@@ -130,10 +133,11 @@ def sample_snapshot_specs(
                 candidates = np.arange(minimum_start, maximum_start + 1, action_block)
                 selected_pairs.append((int(episode), int(rng.choice(candidates))))
         for episode, start in selected_pairs:
+            table_index = lookup[int(episode)]
             specs.append(
                 SnapshotSpec(
                     sample_id=(
-                        f"tworoom:{split_name}:ep{int(episode)}:"
+                        f"{sample_prefix}:{split_name}:ep{int(episode)}:"
                         f"start{start}:h{future_primitive}"
                     ),
                     episode_id=int(episode),

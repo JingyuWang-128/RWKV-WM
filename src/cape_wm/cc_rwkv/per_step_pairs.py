@@ -5,10 +5,8 @@ from pathlib import Path
 from typing import Any
 
 import h5py
-import numpy as np
 
-
-SCHEMA_VERSION = "cc_rwkv_per_step_pairs_v1"
+SCHEMA_VERSION = "cc_rwkv_per_step_pairs_v2"
 SPLIT_CODES = {"train": 0, "validation": 1, "test": 2}
 
 
@@ -52,9 +50,11 @@ class PerStepPairWriter:
         group.create_dataset("sample_id", (n,), dtype=string)
         group.create_dataset("episode_id", (n,), dtype="i8")
         group.create_dataset("start_step", (n,), dtype="i8")
+        group.create_dataset("source_row", (n,), dtype="i8")
         group.create_dataset("split", (n,), dtype="u1")
         group.create_dataset("source_snapshot_hash", (n,), dtype=string)
         group.create_dataset("source_snapshot_hashes", (n, h), dtype=string)
+        group.create_dataset("restored_snapshot_hashes", (n, h), dtype=string)
         group.create_dataset("external_noise_hashes", (n, h), dtype=string)
         group.create_dataset(
             "history_latents", (n, history_steps, latent_dim), dtype="f2", chunks=True
@@ -64,23 +64,13 @@ class PerStepPairWriter:
         )
         group.create_dataset("history_mask", (n, history_steps), dtype="?", chunks=True)
         group.create_dataset("factual_actions", (n, h, action_dim), dtype="f4", chunks=True)
-        group.create_dataset(
-            "factual_latents", (n, h + 1, latent_dim), dtype="f2", chunks=True
-        )
+        group.create_dataset("factual_latents", (n, h + 1, latent_dim), dtype="f2", chunks=True)
         group.create_dataset("factual_states", (n, h + 1, state_dim), dtype="f4", chunks=True)
-        group.create_dataset(
-            "pulse_noop_actions", (n, h, h, action_dim), dtype="f4", chunks=True
-        )
-        group.create_dataset(
-            "pulse_noop_latents", (n, h, h, latent_dim), dtype="f2", chunks=True
-        )
-        group.create_dataset(
-            "pulse_noop_states", (n, h, h, state_dim), dtype="f4", chunks=True
-        )
+        group.create_dataset("pulse_noop_actions", (n, h, h, action_dim), dtype="f4", chunks=True)
+        group.create_dataset("pulse_noop_latents", (n, h, h, latent_dim), dtype="f2", chunks=True)
+        group.create_dataset("pulse_noop_states", (n, h, h, state_dim), dtype="f4", chunks=True)
         group.create_dataset("pulse_noop_mask", (n, h, h), dtype="?", chunks=True)
-        group.create_dataset(
-            "effect_latents", (n, h, h, latent_dim), dtype="f2", chunks=True
-        )
+        group.create_dataset("effect_latents", (n, h, h, latent_dim), dtype="f2", chunks=True)
         group.create_dataset("factual_replay_error", (n, h), dtype="f4", chunks=True)
         group.create_dataset("factual_replay_image_error", (n, h), dtype="f4", chunks=True)
         group.create_dataset("restore_consistent", (n, h), dtype="?", chunks=True)
@@ -112,9 +102,11 @@ class PerStepPairWriter:
         group["sample_id"][index] = item["sample_id"]
         group["episode_id"][index] = int(item["episode_id"])
         group["start_step"][index] = int(item["start_step"])
+        group["source_row"][index] = int(item["source_row"])
         group["split"][index] = SPLIT_CODES[item["split"]]
         group["source_snapshot_hash"][index] = item["source_snapshot_hash"]
         group["source_snapshot_hashes"][index] = item["source_snapshot_hashes"]
+        group["restored_snapshot_hashes"][index] = item["restored_snapshot_hashes"]
         group["external_noise_hashes"][index] = item["external_noise_hashes"]
         for name in (
             "history_latents",
@@ -145,7 +137,7 @@ class PerStepPairWriter:
         self.handle.flush()
         self.handle.close()
 
-    def __enter__(self) -> "PerStepPairWriter":
+    def __enter__(self) -> PerStepPairWriter:
         return self
 
     def __exit__(self, *_: Any) -> None:

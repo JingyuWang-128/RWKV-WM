@@ -13,6 +13,54 @@
 
 ## 1. 目标与核心区别
 
+### 1.1 方法总览图
+
+<p align="center">
+  <img src="figures/cc_rwkv_method_zh.svg"
+       alt="反事实中心化 RWKV 矩阵递推与多步配对训练评估"
+       width="100%" />
+</p>
+
+**图 1. CC-RWKV-WM 方法总览。**
+实际动作与参考动作的参数差直接进入 RWKV 矩阵更新；事实与脉冲零动作分支进行
+free-running 预测，并通过位置平衡的多步目标训练和评估。
+
+投稿用矢量 PDF 和 300 dpi PNG 分别位于
+`docs/figures/cc_rwkv_method_zh.pdf` 与
+`docs/figures/cc_rwkv_method_zh.png`。
+
+### 1.2 训练与推理流程图
+
+<p align="center">
+  <img src="figures/cc_rwkv_training_inference_zh.svg"
+       alt="CC-RWKV-WM 训练与单轨迹 free-running 推理流程"
+       width="100%" />
+</p>
+
+**图 2. CC-RWKV-WM 的训练与推理流程。**
+训练时从每个 factual 状态克隆事实与脉冲零动作分支，并使用位置平衡的多步目标更新
+模型；标准推理只维护一条 factual 轨迹，每步在矩阵更新内部计算实际动作与参考零动作的
+差，不需要额外 rollout 一条 pulse-noop 轨迹。
+
+投稿用矢量 PDF 和 300 dpi PNG 分别位于
+`docs/figures/cc_rwkv_training_inference_zh.pdf` 与
+`docs/figures/cc_rwkv_training_inference_zh.png`。
+
+### 1.3 Decay / Erase / Write 更新流程
+
+<p align="center">
+  <img src="figures/cc_rwkv_decay_erase_write_zh.svg"
+       alt="反事实中心化动作残差更新 RWKV decay、erase 与 write"
+       width="100%" />
+</p>
+
+**图 3. 反事实中心化的 RWKV 状态更新。**
+原版世界分支保持不变；动作参数网络比较实际动作与参考零动作，生成门控后的中心化残差：
+decay 残差调节原始衰减率，erase/edit 和 write 残差分别增加低秩状态修正与低秩写入，
+最后合并得到新的状态矩阵。实际动作等于参考动作时，所有动作残差严格为零。
+
+投稿用矢量 SVG、PDF 和 300 dpi PNG 位于 `docs/figures/` 下的同名文件。
+
 设数据集中真实执行的行为动作序列为
 
 \[
@@ -259,6 +307,20 @@ sample 缓存体积分别约 20.7 KB/sample 和 382.7 KB/sample，按当前 raw-
 线性估算 5,000 samples 约 0.10 GB 和 1.91 GB。正式采集前仍需根据实际并行度和
 checkpoint/临时空间再次确认总 wall time。
 
+逐位置训练现采用两级 checkpoint：默认每 1,000 optimizer steps 原子更新
+`latest.pt`，每 5,000 steps 保留 `checkpoints/step_XXXXXXXX.pt`，最终步无条件保留
+编号版本。checkpoint 包含模型、optimizer、完整 history、实际完成步数、运行配置、
+effect threshold、PyTorch/CUDA RNG 和 batch generator RNG。`--resume` 从输出目录的
+`latest.pt` 恢复，`--resume-from` 可选择编号 checkpoint；配置不一致会拒绝恢复。
+SIGINT/SIGTERM 会在最近完成的 optimizer step 额外保存 `interrupted` checkpoint。
+
+正式训练协议已升级为 `formal_corrected_v1`：三角 loss 使用 position-balanced
+reduction；B3 在每个 factual position 训练 DWM contrastive/orthogonality objective；
+B6 structure-only 可完全关闭 paired-effect 标签加载。由于目标函数语义变化，正式
+checkpoint schema 升级为 `cc_rwkv_per_step_checkpoint_v3`，旧 F1 的 B2/B3 结果仅
+保留为历史记录，不与修正后的正式结果混用。完整训练矩阵见
+`docs/formal_corrected_v1_training_plan.md`。
+
 ## 15. 数据扩充执行记录
 
 5,000-snapshot 首轮训练在用户要求下暂停，保留其缓存和审计结果。采样器新增
@@ -268,3 +330,16 @@ checkpoint/临时空间再次确认总 wall time。
 GPU0/1 各承担 10,000，Action-Delay 在重新调度后由 GPU0/1/2/3 各承担 5,000。
 各 shard 固定相同 episode split，使用全局 shard 索引保证 sample-id 不重叠，完成后
 通过 schema/split 校验和统一审计合并。
+
+## 16. Primitive-action 正式口径（2026-09-05）
+
+为直接检验 RWKV 在多次递推后的长期 imagination，后续正式重采集不再把 TwoRoom-W
+的 5 个 primitive actions 拼成一次模型动作。TwoRoom-W 与 Action-Delay 统一使用
+`action_block=1`、`model_horizon=20`、二维原始动作和 curriculum `1,5,10,20`。
+TwoRoom-W 使用 15 步历史以保持旧协议的 15-primitive-step 上下文跨度；
+Action-Delay 使用 5 步历史以完整初始化 FIFO。
+
+旧 v1 20,000-sample 缓存因 source-row provenance 错误作废。v2 缓存必须额外保存并
+审计 `source_row`、源 episode/step、factual snapshot hash 和分支恢复后的 snapshot
+hash。两个哈希必须在每个 intervention position 完全相同。正式训练只有在新缓存完成
+原始 HDF5 对照审计并冻结 SHA256 后才允许启动。

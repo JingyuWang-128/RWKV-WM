@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 import h5py
 import numpy as np
@@ -10,8 +11,26 @@ import torch
 from torch import Tensor
 from torch.nn import functional as F
 
-from .dwm import DWMOutputBaseline
+from .dwm import DWMOutputBaseline, dwm_auxiliary_losses
 from .state import RWKVMatrixState
+
+ROLLOUT_MASK_POLICY = "position_plus_offset_lt_horizon_v2"
+
+
+def _read_hdf5_rows(dataset: h5py.Dataset, indices: np.ndarray) -> np.ndarray:
+    """Read a split without h5py's expensive large point-selection path."""
+    indices = np.asarray(indices, dtype=np.int64)
+    if indices.ndim != 1 or not len(indices):
+        raise ValueError("HDF5 row indices must be a non-empty vector")
+    if np.any(indices[1:] <= indices[:-1]):
+        raise ValueError("HDF5 row indices must be strictly increasing")
+    # For a large split, one contiguous read plus an in-memory gather avoids
+    # h5py constructing a huge fancy-selection representation. Small splits
+    # retain direct indexed reads so smoke tests do not load the full dataset.
+    if len(indices) * 4 >= dataset.shape[0]:
+        full = np.asarray(dataset)
+        return np.asarray(full[indices])
+    return np.asarray(dataset[indices])
 
 
 @dataclass(slots=True)
@@ -28,11 +47,17 @@ class PerStepBatch:
     sample_ids: list[str]
 
     @classmethod
-    def from_mapping(cls, payload: dict[str, Any], device: torch.device | str) -> "PerStepBatch":
+    def from_mapping(cls, payload: dict[str, Any], device: torch.device | str) -> PerStepBatch:
         names = (
-            "history_latents", "history_actions", "history_mask", "factual_actions",
-            "factual_latents", "pulse_noop_actions", "pulse_noop_latents",
-            "pulse_noop_mask", "effect_latents",
+            "history_latents",
+            "history_actions",
+            "history_mask",
+            "factual_actions",
+            "factual_latents",
+            "pulse_noop_actions",
+            "pulse_noop_latents",
+            "pulse_noop_mask",
+            "effect_latents",
         )
         values = {
             name: payload[name].to(device).float()
@@ -82,9 +107,7 @@ class InMemoryPerStepSplit:
             raise ValueError(f"unknown split: {split}")
         with h5py.File(path, "r") as handle:
             samples = handle["samples"]
-            indices = torch.from_numpy(
-                np.flatnonzero(np.asarray(samples["split"]) == codes[split])
-            )
+            indices = torch.from_numpy(np.flatnonzero(np.asarray(samples["split"]) == codes[split]))
             if limit is not None:
                 if limit <= 0:
                     raise ValueError("limit must be positive")
@@ -97,14 +120,19 @@ class InMemoryPerStepSplit:
                 for item in samples["sample_id"][index]
             ]
             tensor_names = [
-                "history_latents", "history_actions_raw", "history_mask",
-                "factual_actions", "factual_latents", "pulse_noop_actions",
-                "pulse_noop_latents", "pulse_noop_mask",
+                "history_latents",
+                "history_actions_raw",
+                "history_mask",
+                "factual_actions",
+                "factual_latents",
+                "pulse_noop_actions",
+                "pulse_noop_latents",
+                "pulse_noop_mask",
             ]
             if load_effect:
                 tensor_names.append("effect_latents")
             self.tensors = {
-                name: torch.from_numpy(np.asarray(samples[name][index]).copy())
+                name: torch.from_numpy(_read_hdf5_rows(samples[name], index))
                 for name in tensor_names
             }
 
@@ -123,7 +151,9 @@ class InMemoryPerStepSplit:
         payload["sample_id"] = [self.sample_ids[index] for index in indices.tolist()]
         return PerStepBatch.from_mapping(payload, device)
 
-    def random_batch(self, batch_size: int, *, generator: torch.Generator, device: torch.device | str) -> PerStepBatch:
+    def random_batch(
+        self, batch_size: int, *, generator: torch.Generator, device: torch.device | str
+    ) -> PerStepBatch:
         indices = torch.randint(len(self), (batch_size,), generator=generator)
         return self.batch(indices, device=device)
 
@@ -159,9 +189,11 @@ def _split_state(state: RWKVMatrixState, batch_size: int) -> list[RWKVMatrixStat
     channel_shifts = state.channel_shift.split(batch_size, dim=0)
     steps = state.steps.split(batch_size, dim=0)
     return [
-        RWKVMatrixState(matrix=matrix, time_shift=time_shift, channel_shift=channel_shift, steps=step)
+        RWKVMatrixState(
+            matrix=matrix, time_shift=time_shift, channel_shift=channel_shift, steps=step
+        )
         for matrix, time_shift, channel_shift, step in zip(
-            matrices, time_shifts, channel_shifts, steps
+            matrices, time_shifts, channel_shifts, steps, strict=True
         )
     ]
 
@@ -177,18 +209,25 @@ def per_step_rollout(
 ) -> dict[str, Any]:
     predictor = _predictor(model)
     h = min(int(horizon or batch.horizon), batch.horizon)
-    state = predictor.consume_history(batch.history_latents, batch.history_actions, mask=batch.history_mask)
+    state = predictor.consume_history(
+        batch.history_latents, batch.history_actions, mask=batch.history_mask
+    )
     latent = batch.factual_latents[:, 0].to(state.dtype)
     factual_predictions: list[Tensor] = []
     states_before: list[RWKVMatrixState] = []
     factual_inputs: list[Tensor] = []
-    zero = _zero_actions(batch.batch_size, batch.factual_actions.shape[-1], latent.device, latent.dtype)
+    zero = _zero_actions(
+        batch.batch_size, batch.factual_actions.shape[-1], latent.device, latent.dtype
+    )
     factual_diags: list[dict[str, Tensor]] = []
     for position in range(h):
         states_before.append(state.clone())
         factual_inputs.append(latent)
         prediction, state, diagnostics = predictor.step(
-            latent, batch.factual_actions[:, position].to(latent.dtype), state, zero,
+            latent,
+            batch.factual_actions[:, position].to(latent.dtype),
+            state,
+            zero,
             return_diagnostics=return_diagnostics,
         )
         factual_predictions.append(prediction)
@@ -222,7 +261,10 @@ def per_step_rollout(
                     dim=0,
                 )
             zero_batch = _zero_actions(
-                action_batch.shape[0], action_batch.shape[-1], latent_batch.device, latent_batch.dtype
+                action_batch.shape[0],
+                action_batch.shape[-1],
+                latent_batch.device,
+                latent_batch.dtype,
             )
             prediction, state_batch, _ = predictor.step(
                 latent_batch,
@@ -235,7 +277,9 @@ def per_step_rollout(
             state_chunks = _split_state(state_batch, batch.batch_size)
             for position in range(active):
                 position_predictions[position].append(prediction_chunks[position])
-                branch_latents[position] = prediction_chunks[position].to(state_chunks[position].dtype)
+                branch_latents[position] = prediction_chunks[position].to(
+                    state_chunks[position].dtype
+                )
                 branch_states[position] = state_chunks[position]
     else:
         for position in range(h):
@@ -243,7 +287,11 @@ def per_step_rollout(
             branch_latent = factual_inputs[position]
             for offset in range(h - position):
                 absolute = position + offset
-                action = zero if offset == 0 else batch.factual_actions[:, absolute].to(branch_latent.dtype)
+                action = (
+                    zero
+                    if offset == 0
+                    else batch.factual_actions[:, absolute].to(branch_latent.dtype)
+                )
                 prediction, branch_state, diagnostics = predictor.step(
                     branch_latent, action, branch_state, zero, return_diagnostics=return_diagnostics
                 )
@@ -260,7 +308,12 @@ def per_step_rollout(
         pulse_predictions.append(torch.stack(padded, dim=1))
     pulse_pred = torch.stack(pulse_predictions, dim=1)
 
-    mask = batch.pulse_noop_mask[:, :h, :h]
+    # Dataset masks describe the stored horizon, not the shorter curriculum
+    # horizon. Positions beyond the generated suffix are padding, even when
+    # the dataset has a real target there. Never supervise those placeholders.
+    positions = torch.arange(h, device=factual_pred.device)
+    generated = positions[:, None] + positions[None, :] < h
+    mask = batch.pulse_noop_mask[:, :h, :h] & generated[None]
     return {
         "factual_predicted": factual_pred,
         "pulse_predicted": pulse_pred,
@@ -273,8 +326,77 @@ def per_step_rollout(
     }
 
 
-def _masked_mean(value: Tensor, mask: Tensor) -> Tensor:
-    return (value * mask.to(value.dtype)).sum() / mask.sum().clamp_min(1)
+def _position_balanced_mean(value: Tensor, mask: Tensor) -> Tensor:
+    """Average offsets within each intervention before averaging positions.
+
+    ``value`` and ``mask`` use the triangular ``[batch, position, offset]``
+    layout. A flat masked mean would give early positions more weight merely
+    because they have longer valid suffixes. This reduction gives every
+    sample/position pair with at least one valid offset equal weight.
+    """
+
+    if value.shape != mask.shape or value.ndim != 3:
+        raise ValueError("position-balanced inputs must share [batch,position,offset]")
+    valid = mask.to(value.dtype)
+    counts = valid.sum(dim=-1)
+    per_position = (value * valid).sum(dim=-1) / counts.clamp_min(1)
+    valid_positions = counts > 0
+    return (per_position * valid_positions.to(value.dtype)).sum() / valid_positions.sum().clamp_min(
+        1
+    )
+
+
+def per_step_dwm_auxiliary_loss(
+    model: DWMOutputBaseline,
+    batch: PerStepBatch,
+    *,
+    horizon: int,
+    teacher_forcing: bool,
+    temperature: float,
+) -> tuple[Tensor, Tensor]:
+    """Apply the training-only DWM objective at every factual position.
+
+    Both views start from the same factual RWKV state and latent. The factual
+    action advances the persistent state, while a deterministic cyclic batch
+    permutation supplies the temporary alternative-action view. The latter
+    is discarded, so it cannot contaminate the factual rollout state. A
+    deterministic permutation keeps batch sampling identical across methods.
+    """
+
+    if batch.batch_size < 2:
+        raise ValueError("B3 DWM loss requires batch_size >= 2")
+    predictor = model.predictor
+    state = predictor.consume_history(
+        batch.history_latents, batch.history_actions, mask=batch.history_mask
+    )
+    latent = batch.factual_latents[:, 0].to(state.dtype)
+    contrastive: list[Tensor] = []
+    orthogonality: list[Tensor] = []
+    for position in range(horizon):
+        action = batch.factual_actions[:, position].to(latent.dtype)
+        alternative = action.roll(shifts=1, dims=0)
+        prediction, next_state, factual_info = predictor.step(
+            latent, action, state, return_diagnostics=True
+        )
+        _, _, alternative_info = predictor.step(latent, alternative, state, return_diagnostics=True)
+        factual_hidden = factual_info["predictor_hidden"][:, 0]
+        alternative_hidden = alternative_info["predictor_hidden"][:, 0]
+        world, alternative_world = model.world_views(factual_hidden, alternative_hidden)
+        losses = dwm_auxiliary_losses(
+            prediction,
+            world,
+            alternative_world,
+            temperature=temperature,
+        )
+        contrastive.append(losses.world_contrastive)
+        orthogonality.append(losses.orthogonality)
+        state = next_state
+        latent = (
+            batch.factual_latents[:, position + 1].to(state.dtype)
+            if teacher_forcing
+            else prediction.to(state.dtype)
+        )
+    return torch.stack(contrastive).mean(), torch.stack(orthogonality).mean()
 
 
 def per_step_loss(
@@ -285,19 +407,30 @@ def per_step_loss(
     effect_threshold: float = 0.0,
     allow_paired_loss: bool = True,
     effect_weight: float = 1.0,
+    dwm_contrastive_weight: float = 0.3,
+    dwm_orthogonality_weight: float = 0.5,
+    dwm_temperature: float = 0.07,
     teacher_forcing: bool = False,
 ) -> tuple[Tensor, dict[str, Tensor]]:
     if effect_weight < 0:
         raise ValueError("effect_weight must be non-negative")
+    if min(dwm_contrastive_weight, dwm_orthogonality_weight) < 0:
+        raise ValueError("DWM loss weights must be non-negative")
+    if dwm_temperature <= 0:
+        raise ValueError("DWM temperature must be positive")
     output = per_step_rollout(
         model, batch, horizon=horizon, return_diagnostics=False, teacher_forcing=teacher_forcing
     )
     h = output["factual_predicted"].shape[1]
-    factual_point = F.smooth_l1_loss(output["factual_predicted"], output["factual_target"], reduction="none").mean(-1)
+    factual_point = F.smooth_l1_loss(
+        output["factual_predicted"], output["factual_target"], reduction="none"
+    ).mean(-1)
     factual = factual_point.mean()
     mask = output["mask"]
-    pulse_point = F.smooth_l1_loss(output["pulse_predicted"], output["pulse_target"], reduction="none").mean(-1)
-    pulse = _masked_mean(pulse_point, mask)
+    pulse_point = F.smooth_l1_loss(
+        output["pulse_predicted"], output["pulse_target"], reduction="none"
+    ).mean(-1)
+    pulse = _position_balanced_mean(pulse_point, mask)
     zero = factual.new_zeros(())
     effect = direction = magnitude = zero
     if allow_paired_loss:
@@ -308,22 +441,45 @@ def per_step_loss(
         aligned = predicted_effect.new_zeros(predicted_effect.shape)
         for position in range(h):
             length = h - position
-            aligned[:, position, :length] = output["factual_predicted"][:, position : position + length]
+            aligned[:, position, :length] = output["factual_predicted"][
+                :, position : position + length
+            ]
         predicted_effect = output["pulse_predicted"] - aligned
         pair_mask = mask
         effect_point = F.smooth_l1_loss(predicted_effect, target_effect, reduction="none").mean(-1)
-        effect = _masked_mean(effect_point, pair_mask)
+        effect = _position_balanced_mean(effect_point, pair_mask)
         true_norm = target_effect.norm(dim=-1)
         selected = pair_mask & (true_norm > effect_threshold)
-        direction_point = 1.0 - F.cosine_similarity(predicted_effect, target_effect, dim=-1, eps=1e-6)
-        magnitude_point = ((predicted_effect.norm(dim=-1) + 1e-6).log() - (true_norm + 1e-6).log()).abs()
-        direction = _masked_mean(direction_point, selected)
-        magnitude = _masked_mean(magnitude_point, selected)
-    total = factual + pulse + effect_weight * (effect + 0.1 * direction + 0.1 * magnitude)
+        direction_point = 1.0 - F.cosine_similarity(
+            predicted_effect, target_effect, dim=-1, eps=1e-6
+        )
+        magnitude_point = (
+            (predicted_effect.norm(dim=-1) + 1e-6).log() - (true_norm + 1e-6).log()
+        ).abs()
+        direction = _position_balanced_mean(direction_point, selected)
+        magnitude = _position_balanced_mean(magnitude_point, selected)
+    dwm_contrastive = dwm_orthogonality = zero
+    if isinstance(model, DWMOutputBaseline):
+        dwm_contrastive, dwm_orthogonality = per_step_dwm_auxiliary_loss(
+            model,
+            batch,
+            horizon=h,
+            teacher_forcing=teacher_forcing,
+            temperature=dwm_temperature,
+        )
+    total = (
+        factual
+        + pulse
+        + effect_weight * (effect + 0.1 * direction + 0.1 * magnitude)
+        + dwm_contrastive_weight * dwm_contrastive
+        + dwm_orthogonality_weight * dwm_orthogonality
+    )
     return total, {
         "factual_prediction": factual,
         "noop_prediction": pulse,
         "paired_effect": effect,
         "effect_direction": direction,
         "effect_magnitude": magnitude,
+        "dwm_world_contrastive": dwm_contrastive,
+        "dwm_orthogonality": dwm_orthogonality,
     }

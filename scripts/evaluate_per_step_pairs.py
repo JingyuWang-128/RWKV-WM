@@ -5,9 +5,8 @@ import json
 from pathlib import Path
 
 import torch
-from torch.nn import functional as F
 
-from scripts.train_cc_rwkv import build_model
+from cape_wm.cc_rwkv.model_factory import build_rwkv_world_model
 from cape_wm.cc_rwkv.per_step_training import InMemoryPerStepSplit, per_step_rollout
 
 
@@ -34,7 +33,7 @@ def main() -> None:
     args = parse_args()
     payload = torch.load(args.checkpoint, map_location="cpu")
     dataset = InMemoryPerStepSplit(args.data, split=args.split)
-    model = build_model(
+    model = build_rwkv_world_model(
         args.method,
         args.profile,
         int(dataset.tensors["factual_latents"].shape[-1]),
@@ -69,18 +68,26 @@ def main() -> None:
                 rows.append(
                     {
                         "sample_id": sample_id,
-                        "factual_rmse": _mean(factual_err[row_index], torch.ones_like(factual_err[row_index], dtype=torch.bool)),
+                        "factual_rmse": _mean(
+                            factual_err[row_index],
+                            torch.ones_like(factual_err[row_index], dtype=torch.bool),
+                        ),
                         "noop_rmse": _mean(pulse_err[row_index], sample_mask),
                         "effect_rmse": _mean(effect_err[row_index], sample_mask),
                         "factual_one_step_rmse": float(factual_err[row_index, 0]),
-                        "effect_one_step_rmse": _mean(effect_err[row_index, :, :1], sample_mask[:, :1]),
+                        "effect_one_step_rmse": _mean(
+                            effect_err[row_index, :, :1], sample_mask[:, :1]
+                        ),
                         "effect_valid_fraction": float(sample_mask.float().mean()),
                     }
                 )
             position_errors.extend(
                 [
                     [
-                        _mean(effect_err[:, position, : h - position], mask[:, position, : h - position])
+                        _mean(
+                            effect_err[:, position, : h - position],
+                            mask[:, position, : h - position],
+                        )
                     ]
                     for position in range(h)
                 ]
@@ -107,7 +114,8 @@ def main() -> None:
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, indent=2) + "\n")
-    print(json.dumps({k: result[k] for k in ("schema_version", "method", "split", "samples", "horizon", "metrics")}, indent=2))
+    displayed = ("schema_version", "method", "split", "samples", "horizon", "metrics")
+    print(json.dumps({key: result[key] for key in displayed}, indent=2))
 
 
 if __name__ == "__main__":

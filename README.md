@@ -165,8 +165,11 @@ B4 和 B6 使用相同结构容量，用于区分“多了低秩动作参数”�
 - `cc_rwkv_per_step_pairs_v1` HDF5 schema、分片采集、合并和审计已实现；
 - TwoRoom-W 与 Action-Delay 的逐位置 factual/pulse-noop 数据采集已跑通；
 - 本地正式流程采用每个任务 20,000 个主样本和 episode-disjoint train/validation/test split；
-- B2/B4/B6 的逐位置训练与独立 test 评估入口已实现；
-- B3 的 DWM wrapper 和旧训练逻辑已实现，但当前逐位置训练入口会解包到基础 predictor，尚未接入 DWM auxiliary loss；修复并重新审计前，已有逐位置 B3 运行不能作为有效 DWM 基线；
+- B2/B3/B4/B6 的逐位置训练与独立 test 评估入口已实现；B3 现在会在每个
+  factual position 训练 DWM world contrastive/orthogonality objective，并有
+  world-head 非零梯度阻断测试；
+- 三角 suffix loss 使用 position-balanced reduction；目标函数语义变化后 checkpoint
+  schema 已升至 v3，旧逐位置 F1 的 B2/B3 运行只保留为历史结果；
 - 旧 H1-only CC-RWKV M5 已完成但未通过预注册 Gate，因此只作为历史结果保留；当前正式比较改用逐时间位置 paired supervision，尚未形成最终优越性结论。
 
 详细协议见 [逐时间位置配对反事实训练方案](docs/per_step_paired_counterfactual_training.md)。旧方案和历史实验分别记录在 [长期方法提案](docs/long_horizon_method_proposals.md)、[实施计划](docs/cc_rwkv_implementation_plan.md) 和 [旧 M5 报告](docs/cc_rwkv_m5_report.md)。
@@ -233,27 +236,47 @@ scripts/bootstrap.sh
 
 ```bash
 .venv/bin/python scripts/train_per_step_pairs.py \
-  --data artifacts/cache/cc_rwkv/per_step_pairs/tworoom_w/mvp20000_merged/pairs.h5 \
-  --output artifacts/runs/per_step_pairs/formal/tworoom_w/b6_seed0 \
+  --data artifacts/cache/cc_rwkv/per_step_pairs/tworoom_w/formal_v2_primitive_20000_merged/pairs.h5 \
+  --output artifacts/runs/per_step_pairs/formal_corrected_v1/f3/tworoom_w/b6_w1p0_seed0 \
   --method b6 \
   --profile main \
   --max-steps 30000 \
   --batch-size 8 \
-  --curriculum 1,2,4 \
+  --curriculum 1,5,10,20 \
   --effect-weight 1.0 \
+  --checkpoint-interval 1000 \
+  --snapshot-interval 5000 \
   --seed 0 \
   --device cuda:0
 ```
 
-Action-Delay 使用 `--curriculum 1,5,10,20`。将 `--method` 改为 `b2` 或 `b4` 可运行对应基线，`b3` 则必须先补齐上述 DWM auxiliary loss；正式比较需要三个预注册随机种子。
+TwoRoom-W 与 Action-Delay 均使用 primitive-action `--curriculum 1,5,10,20`。
+将 `--method` 改为 `b2`、`b3`
+或 `b4` 可运行对应基线；B3 默认使用 DWM 权重 `0.3/0.5` 和 temperature `0.07`。
+正式比较使用三个预注册随机种子，完整冻结矩阵见
+[formal_corrected_v1 训练计划](docs/formal_corrected_v1_training_plan.md)。
+
+`latest.pt` 每 `checkpoint-interval` 步原子更新，编号 checkpoint 每
+`snapshot-interval` 步保存在 `checkpoints/step_XXXXXXXX.pt`；最终步始终同时保存。
+训练中断后使用完全相同的配置和输出目录恢复：
+
+```bash
+.venv/bin/python scripts/train_per_step_pairs.py \
+  ...与原训练完全相同的参数... \
+  --resume
+```
+
+也可以通过 `--resume-from /path/to/step_XXXXXXXX.pt` 从指定编号 checkpoint
+恢复。恢复会严格核对方法、数据、seed、batch size、学习率、curriculum、effect
+weight 和总步数，并还原模型、optimizer、PyTorch/CUDA RNG 与 batch-sampling RNG。
 
 在冻结的 test split 上评估：
 
 ```bash
 .venv/bin/python scripts/evaluate_per_step_pairs.py \
-  --data artifacts/cache/cc_rwkv/per_step_pairs/tworoom_w/mvp20000_merged/pairs.h5 \
-  --checkpoint artifacts/runs/per_step_pairs/formal/tworoom_w/b6_seed0/latest.pt \
-  --output artifacts/results/cc_rwkv/per_step_pairs/tworoom_w/b6_seed0_test.json \
+  --data artifacts/cache/cc_rwkv/per_step_pairs/tworoom_w/formal_v2_primitive_20000_merged/pairs.h5 \
+  --checkpoint artifacts/runs/per_step_pairs/formal_corrected_v1/f3/tworoom_w/b6_w1p0_seed0/latest.pt \
+  --output artifacts/results/cc_rwkv/per_step_pairs/formal_corrected_v1/tworoom_w/b6_w1p0_seed0_test.json \
   --method b6 \
   --profile main \
   --split test \

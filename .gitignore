@@ -11,3 +11,11 @@ checkpoints/
 wandb/
 *.egg-info/
 
+# Local editor/agent settings and credentials must not be published.
+.vscode/
+.agents/
+.codex/
+.env
+.env.*
+*.pem
+*.key

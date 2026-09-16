@@ -10,6 +10,13 @@ from torch.nn import functional as F
 RWKV7_GROUP_NORM_EPS = 64e-5
 RWKV7_DECAY_SCALE = 0.606531  # exp(-0.5), as used by the official RNN reference.
 RWKV7_NORMALIZE_EPS = 1e-12
+# A learned rank-one transition with unconstrained vectors can amplify the
+# matrix state exponentially over a long observed history.  Bounding one
+# factor elementwise and scaling it by 0.1 / head_dim keeps the worst-case
+# operator norm of each action erase/write outer product at or below 0.1.
+# The same parameterization is used by B4 and B6, so reference subtraction
+# remains their only recurrent-architecture difference.
+RWKV7_ACTION_UPDATE_OPERATOR_BOUND = 0.1
 CC_DECAY_LOG_HAZARD = "log_hazard"
 CC_DECAY_OFFICIAL_LOGIT = "official_logit_residual"
 CC_DECAY_MODES = frozenset({CC_DECAY_LOG_HAZARD, CC_DECAY_OFFICIAL_LOGIT})
@@ -160,6 +167,31 @@ def counterfactual_rwkv7_matrix_step(
         * action_write_key.float().unsqueeze(-2)
     )
     return world_next + action_update, world_next, action_update
+
+
+def bounded_action_residual(
+    raw_residual: Tensor,
+    gate: Tensor,
+    *,
+    num_heads: int,
+) -> Tensor:
+    """Return a head-shaped residual with a bounded outer-product norm.
+
+    The companion erase/write key is elementwise bounded by ``tanh``.  If
+    its head width is ``n``, scaling this residual by ``0.1 / n`` makes
+    ``||residual||_2 * ||key||_2 <= 0.1`` for every head.  This constrains the
+    learned action transition itself instead of clipping the recurrent state.
+    """
+
+    if raw_residual.shape != gate.shape or raw_residual.ndim != 2:
+        raise ValueError("raw_residual and gate must share [batch, model_dim]")
+    if num_heads <= 0 or raw_residual.shape[-1] % num_heads:
+        raise ValueError("num_heads must divide the residual width")
+    head_dim = raw_residual.shape[-1] // num_heads
+    scale = RWKV7_ACTION_UPDATE_OPERATOR_BOUND / head_dim
+    return (gate.float() * torch.tanh(raw_residual.float()) * scale).view(
+        raw_residual.shape[0], num_heads, head_dim
+    )
 
 
 class RWKV7ActionParameterNetwork(nn.Module):
@@ -351,12 +383,12 @@ class CounterfactualCenteredRWKV7TimeMix(nn.Module):
         learning_rate_h = learning_rate.view(batch, h, n)
         decay_h = decay.view(batch, h, n)
         world_decay_h = world_decay.view(batch, h, n)
-        action_erase_delta_h = (
-            intervention_gate * action_erase_delta
-        ).view(batch, h, n)
-        action_write_delta_h = (
-            intervention_gate * action_write_delta
-        ).view(batch, h, n)
+        action_erase_delta_h = bounded_action_residual(
+            action_erase_delta, intervention_gate, num_heads=h
+        )
+        action_write_delta_h = bounded_action_residual(
+            action_write_delta, intervention_gate, num_heads=h
+        )
         action_erase_key_h = torch.tanh(self.action_erase_key(xw)).view(batch, h, n)
         action_write_key_h = torch.tanh(self.action_write_key(xw)).view(batch, h, n)
 
@@ -400,8 +432,10 @@ class CounterfactualCenteredRWKV7TimeMix(nn.Module):
             "counterfactual_decay": decay,
             "world_erase": -normalized_key.reshape(batch, channels),
             "action_erase_delta": action_erase_delta,
+            "bounded_action_erase_delta": action_erase_delta_h.reshape(batch, channels),
             "world_write": value,
             "action_write_delta": action_write_delta,
+            "bounded_action_write_delta": action_write_delta_h.reshape(batch, channels),
             "intervention_gate": intervention_gate,
             "matrix_update_world_norm": (
                 official_world_next - matrix

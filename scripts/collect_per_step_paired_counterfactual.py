@@ -10,8 +10,17 @@ import h5py
 import numpy as np
 import torch
 
-from cape_wm.cc_rwkv.branch_dataset import FrozenImageEncoder, freeze_episode_split, sample_snapshot_specs, split_sha256
-from cape_wm.cc_rwkv.branches import ActionDelayTwoRoomAdapter, TwoRoomBranchAdapter, snapshot_sha256
+from cape_wm.cc_rwkv.branch_dataset import (
+    FrozenImageEncoder,
+    freeze_episode_split,
+    sample_snapshot_specs,
+    split_sha256,
+)
+from cape_wm.cc_rwkv.branches import (
+    ActionDelayTwoRoomAdapter,
+    TwoRoomBranchAdapter,
+    snapshot_sha256,
+)
 from cape_wm.cc_rwkv.lewm import FrozenLeWMEncoder
 from cape_wm.cc_rwkv.per_step_pairs import SCHEMA_VERSION, PerStepPairWriter
 from cape_wm.cc_rwkv.protocol import file_sha256, load_frozen_test_episode_ids
@@ -106,13 +115,23 @@ def _make_item(
     audit: bool,
 ) -> dict[str, Any]:
     start = int(spec.start_row)
+    primitive_horizon = model_horizon * action_block
+    source_rows = np.arange(start, start + primitive_horizon, dtype=np.int64)
+    source_episode_ids = np.asarray(source["ep_idx"][source_rows], dtype=np.int64)
+    if not np.all(source_episode_ids == int(spec.episode_id)):
+        raise RuntimeError(f"source-row episode mismatch for {spec.sample_id}: row {start}")
+    if "step_idx" in source:
+        source_steps = np.asarray(source["step_idx"][source_rows], dtype=np.int64)
+        expected_steps = np.arange(int(spec.start_step), int(spec.start_step) + primitive_horizon)
+        if not np.array_equal(source_steps, expected_steps):
+            raise RuntimeError(f"source-row step mismatch for {spec.sample_id}")
     dense_actions = np.asarray(
-        source["action"][start : start + model_horizon * action_block], dtype=np.float32
+        source["action"][start : start + primitive_horizon], dtype=np.float32
     )
+    if dense_actions.shape != (primitive_horizon, 2) or not np.isfinite(dense_actions).all():
+        raise RuntimeError(f"invalid factual action suffix for {spec.sample_id}")
     factual_actions = dense_actions.reshape(model_horizon, action_block * 2)
-    history_rows = start + np.arange(
-        -history_steps * action_block, 0, action_block, dtype=np.int64
-    )
+    history_rows = start + np.arange(-history_steps * action_block, 0, action_block, dtype=np.int64)
     history_images = np.asarray(source["pixels"][history_rows], dtype=np.uint8)
     history_actions = np.stack(
         [
@@ -166,7 +185,7 @@ def _make_item(
     factual_replay_image_error = np.asarray(
         [
             float(np.max(np.abs(a.astype(np.int16) - b.astype(np.int16))))
-            for a, b in zip(replay_images[1:], factual_images[1:])
+            for a, b in zip(replay_images[1:], factual_images[1:], strict=True)
         ],
         dtype=np.float32,
     )
@@ -177,19 +196,17 @@ def _make_item(
     if snapshot_sha256(env.snapshot()) != base_hash:
         raise RuntimeError(f"base snapshot restore mismatch for {spec.sample_id}")
 
-    pulse_images = np.zeros(
-        (model_horizon, model_horizon, 224, 224, 3), dtype=np.uint8
-    )
+    pulse_images = np.zeros((model_horizon, model_horizon, 224, 224, 3), dtype=np.uint8)
     pulse_states = np.zeros(
         (model_horizon, model_horizon, factual_states_array.shape[-1]), dtype=np.float32
     )
-    pulse_actions = np.zeros(
-        (model_horizon, model_horizon, action_block * 2), dtype=np.float32
-    )
+    pulse_actions = np.zeros((model_horizon, model_horizon, action_block * 2), dtype=np.float32)
     restore_consistent = np.ones(model_horizon, dtype=bool)
+    restored_hashes: list[str] = []
     for position, snapshot in enumerate(factual_snapshots):
         env.restore(snapshot)
         initial_hash = snapshot_sha256(env.snapshot())
+        restored_hashes.append(initial_hash)
         initial_state = env.state_vector().copy()
         restore_consistent[position] &= initial_hash == source_hashes[position]
         restore_consistent[position] &= np.array_equal(
@@ -216,7 +233,9 @@ def _make_item(
     cursor = 0
     factual_latents = encoded[cursor : cursor + model_horizon + 1]
     cursor += model_horizon + 1
-    pulse_latents = np.zeros((model_horizon, model_horizon, factual_latents.shape[-1]), dtype=np.float32)
+    pulse_latents = np.zeros(
+        (model_horizon, model_horizon, factual_latents.shape[-1]), dtype=np.float32
+    )
     for position in range(model_horizon):
         length = model_horizon - position
         pulse_latents[position, :length] = encoded[cursor : cursor + length]
@@ -238,9 +257,11 @@ def _make_item(
         "sample_id": spec.sample_id,
         "episode_id": int(spec.episode_id),
         "start_step": int(spec.start_step),
+        "source_row": int(spec.start_row),
         "split": spec.split,
         "source_snapshot_hash": base_hash,
         "source_snapshot_hashes": source_hashes,
+        "restored_snapshot_hashes": restored_hashes,
         "external_noise_hashes": noise_hashes,
         "history_latents": encoder(history_images),
         "history_actions_raw": history_actions,
@@ -266,7 +287,9 @@ def _make_item(
 def main() -> None:
     args = parse_args()
     defaults = {
-        "tworoom_w": (3, 20, 5),
+        # Keep the old 15-primitive-step context span while using one RWKV
+        # transition per primitive action in the formal long-rollout data.
+        "tworoom_w": (15, 20, 1),
         "action_delay": (5, 20, 1),
     }[args.variant]
     history_steps = args.history_steps or defaults[0]
@@ -279,6 +302,11 @@ def main() -> None:
     args.output.mkdir(parents=True, exist_ok=True)
     args.cache_dir.mkdir(parents=True, exist_ok=True)
     model_horizon = future_primitive_steps // action_block
+    # Hash each immutable input once per shard. The previous implementation
+    # reread the 12+ GiB source dataset for both metadata and manifest output.
+    source_dataset_sha256 = file_sha256(args.data)
+    encoder_weights_sha256 = file_sha256(args.weights)
+    model_config_sha256 = file_sha256(args.model_config)
 
     import gymnasium as gym
     import stable_worldmodel as swm
@@ -302,6 +330,7 @@ def main() -> None:
             allow_multiple_per_episode=args.allow_multiple_per_episode,
             shard_index=args.shard_index,
             num_shards=args.num_shards,
+            sample_prefix=args.variant,
         )
         finite_actions = np.asarray(source["action"], dtype=np.float32)
         finite_actions = finite_actions[np.isfinite(finite_actions).all(axis=1)]
@@ -325,18 +354,16 @@ def main() -> None:
             env = ActionDelayTwoRoomAdapter(raw_env, delay=5)
             state_dim = 13
         else:
-            env = TwoRoomBranchAdapter(
-                raw_env, drift_amplitude=0.5, drift_seed=args.perturb_seed
-            )
+            env = TwoRoomBranchAdapter(raw_env, drift_amplitude=0.5, drift_seed=args.perturb_seed)
             state_dim = 2
 
         local_samples = len(specs)
         audit_count = int(np.ceil(local_samples * args.raw_audit_fraction)) if local_samples else 0
         metadata = {
             "variant": args.variant,
-            "source_dataset_sha256": file_sha256(args.data),
-            "encoder_weights_sha256": file_sha256(args.weights),
-            "model_config_sha256": file_sha256(args.model_config),
+            "source_dataset_sha256": source_dataset_sha256,
+            "encoder_weights_sha256": encoder_weights_sha256,
+            "model_config_sha256": model_config_sha256,
             "split_sha256": split_sha256(split),
             "spec_sha256": _spec_hash(specs),
             "action_block": action_block,
@@ -350,6 +377,8 @@ def main() -> None:
             "common_random_numbers": True,
             "triangular_mask": True,
             "factual_replay_definition": "deterministic replay from identical snapshot",
+            "temporal_unit": "primitive_action",
+            "history_primitive_steps": history_steps * action_block,
         }
         output_h5 = args.output / "pairs.h5"
         with PerStepPairWriter(
@@ -367,9 +396,7 @@ def main() -> None:
                 # Make the drift draw independent of collection order. This is
                 # important when a later formal run is resumed or repartitioned.
                 if isinstance(env, TwoRoomBranchAdapter) and args.variant == "tworoom_w":
-                    env._drift_rng = np.random.default_rng(
-                        args.perturb_seed + int(spec.episode_id)
-                    )
+                    env._drift_rng = np.random.default_rng(args.perturb_seed + int(spec.episode_id))
                 item = _make_item(
                     env=env,
                     source=source,
@@ -402,9 +429,9 @@ def main() -> None:
         "spec_sha256": _spec_hash(specs),
         "split_sha256": split_sha256(split),
         "pair_dataset_sha256": file_sha256(output_h5),
-        "source_dataset_sha256": file_sha256(args.data),
-        "encoder_weights_sha256": file_sha256(args.weights),
-        "model_config_sha256": file_sha256(args.model_config),
+        "source_dataset_sha256": source_dataset_sha256,
+        "encoder_weights_sha256": encoder_weights_sha256,
+        "model_config_sha256": model_config_sha256,
         "action_block": action_block,
         "primitive_horizon": future_primitive_steps,
         "model_horizon": model_horizon,

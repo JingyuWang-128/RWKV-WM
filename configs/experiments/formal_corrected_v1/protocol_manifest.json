@@ -1,0 +1,54 @@
+{
+  "protocol_id": "formal_corrected_v1",
+  "created_at": "2026-09-05",
+  "checkpoint_schema": "cc_rwkv_per_step_checkpoint_v3",
+  "summary_schema": "cc_rwkv_per_step_training_summary_v2",
+  "loss_normalization": "position_balanced_v1",
+  "optimizer_policy": "rwkv7_official_style_adamw_v1",
+  "data_status": "audited_v2_primitive_pass",
+  "temporal_unit": "primitive_action",
+  "datasets": {
+    "tworoom_w": {
+      "path": "artifacts/cache/cc_rwkv/per_step_pairs/tworoom_w/formal_v2_primitive_20000_merged/pairs.h5",
+      "sha256": "af75f5c81fb936951cd7bf66c524f6ebb5980bd35cc7da8ac3ef7829d7f5ab55",
+      "audit_status": "pass",
+      "audit_report": "artifacts/cache/cc_rwkv/per_step_pairs/tworoom_w/formal_v2_primitive_20000_merged/audit.json",
+      "max_effect_alignment_error": 0.00390625,
+      "samples": 20000,
+      "split": [16000, 2000, 2000],
+      "action_block": 1,
+      "model_horizon": 20,
+      "history_steps": 15
+    },
+    "action_delay": {
+      "path": "artifacts/cache/cc_rwkv/per_step_pairs/action_delay/formal_v2_primitive_20000_merged/pairs.h5",
+      "sha256": "9d5c1417ecebd8d9cbacb4cb87d350f220588697cb23144e1591594d4db8a5fa",
+      "audit_status": "pass",
+      "audit_report": "artifacts/cache/cc_rwkv/per_step_pairs/action_delay/formal_v2_primitive_20000_merged/audit.json",
+      "max_effect_alignment_error": 0.00390625,
+      "samples": 20000,
+      "split": [16000, 2000, 2000],
+      "action_block": 1,
+      "model_horizon": 20,
+      "history_steps": 5
+    }
+  },
+  "code_sha256": {
+    "src/cape_wm/cc_rwkv/cell.py": "e820c22ea1d2157c77e5c3b9a3d3b4c9bf668b8880f849d597699424932d58db",
+    "src/cape_wm/cc_rwkv/counterfactual.py": "35fea75d7d781f057a22941fd8408614311d77a095db355001c0438eef7da1fa",
+    "src/cape_wm/cc_rwkv/dwm.py": "f64fb190c3c52e1b7108b02b954de52fff8cf815babc2945a919a819ed755ff5",
+    "src/cape_wm/cc_rwkv/model_factory.py": "e939a3a016ebee1165d521a17bb8aa097ca115f0d33e234e7628fac5182f30e9",
+    "src/cape_wm/cc_rwkv/predictor.py": "73ccbb95619704bd502fd6ba5507630c2bd54db1e8087b552b4e3f9ec7d08b7a",
+    "src/cape_wm/cc_rwkv/state.py": "59d927c48af422b0aa39150fa8615aa576ad2f7777702f75f8f24c64cd2118ca",
+    "src/cape_wm/cc_rwkv/per_step_training.py": "33a14b302dcaa6b61e723e65ac3226d15115f631e44ddb0972eb5a5a1dbe796b",
+    "src/cape_wm/cc_rwkv/per_step_checkpoint.py": "bf7d53ceee4270f1c83accd3e6eba6b445fc805174a51a07934a2bee7a8b2542",
+    "src/cape_wm/cc_rwkv/per_step_pairs.py": "9e7f3f9ecefd7eaff60048fe37160bb76d917979daf6e295fdc2fa3abe075e8e",
+    "scripts/train_per_step_pairs.py": "0f1d2ae4e06ca1c887195eac64d40584621925057507236335637cf8fbfbb885",
+    "scripts/run_formal_stage_queue.py": "54c1f1cf98e4a4a07c1dc4aa618fc6c1e98fba3887729e27f883d918224fb138",
+    "scripts/audit_per_step_paired_counterfactual.py": "29919d037808018dd37d28595a51ae38151f77e94043938b7488bf2623c94a68",
+    "scripts/merge_per_step_pair_shards.py": "e1416994111746e5d4e3f968ed2197d8845f5bab83d1edd5809f4ac222506425"
+  },
+  "job_count": 42,
+  "git_commit": null,
+  "git_note": "Git metadata was unavailable in the synchronized workspace; exact code hashes are frozen above."
+}
